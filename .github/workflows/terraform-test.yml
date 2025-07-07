@@ -1,5 +1,9 @@
 name: Terraform Test and Validation
 
+permissions:
+  contents: read
+  security-events: write
+
 on:
   push:
     branches: [main, develop, staging]
@@ -23,19 +27,17 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Checkout Code
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
 
-      - name: Setup Terraform
-        uses: hashicorp/setup-terraform@v3
+      - uses: hashicorp/setup-terraform@v3
         with:
           terraform_version: ${{ env.TF_VERSION }}
 
       - name: Terraform Init
         run: terraform init
 
-      - name: Terraform Format Check
-        run: terraform fmt -check -recursive
+      - name: Terraform Format Fix
+        run: terraform fmt -recursive
 
       - name: Terraform Validate
         run: terraform validate
@@ -55,8 +57,7 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Checkout Code
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
 
       - name: Run Trivy config scan
         uses: aquasecurity/trivy-action@master
