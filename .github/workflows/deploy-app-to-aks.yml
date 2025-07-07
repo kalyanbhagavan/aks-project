@@ -79,7 +79,7 @@ jobs:
           echo "Copying Kubernetes manifests and scripts to jumpbox..."
           sshpass -p "${{ secrets.JUMPBOX_PASSWORD }}" scp -o StrictHostKeyChecking=no -r ./k8s ./scripts azureuser@${{ secrets.JUMPBOX_IP }}:~/
 
-      - name: Run Setup and Deploy Script on Jumpbox
+            - name: Run Setup and Deploy Script on Jumpbox
         run: |
           echo "Executing setup-and-deploy.sh remotely..."
           sshpass -p "${{ secrets.JUMPBOX_PASSWORD }}" ssh -o StrictHostKeyChecking=no azureuser@${{ secrets.JUMPBOX_IP }} << EOF
@@ -88,6 +88,12 @@ jobs:
             export ARM_CLIENT_SECRET="$(echo '${{ secrets.AZURE_CREDENTIALS }}' | jq -r .clientSecret)"
             export ARM_SUBSCRIPTION_ID="$(echo '${{ secrets.AZURE_CREDENTIALS }}' | jq -r .subscriptionId)"
             export ARM_TENANT_ID="$(echo '${{ secrets.AZURE_CREDENTIALS }}' | jq -r .tenantId)"
+
+            # Set configuration variables
+            export ACR_NAME="${{ secrets.ACR_NAME }}"
+            export RESOURCE_GROUP="${{ secrets.RESOURCE_GROUP_NAME }}"
+            export AKS_NAME="${{ secrets.AKS_CLUSTER_NAME }}"
+            export STORAGE_ACCOUNT="${{ secrets.STORAGE_ACCOUNT_NAME }}"
 
             cd ~/scripts
             chmod +x setup-and-deploy.sh

@@ -9,6 +9,7 @@ set -e
 GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
 RED='\033[0;31m'
+BLUE='\033[0;34m'
 NC='\033[0m'
 
 print_status() {
@@ -21,6 +22,10 @@ print_warning() {
 
 print_error() {
     echo -e "${RED}[ERROR]${NC} $1"
+}
+
+print_header() {
+    echo -e "${BLUE}[DEPLOYMENT]${NC} $1"
 }
 
 # Check if jq is installed
@@ -49,15 +54,6 @@ if ! command -v kubelogin &> /dev/null; then
     unzip kubelogin-linux-amd64.zip
     sudo mv bin/linux_amd64/kubelogin /usr/local/bin/
     rm -rf bin kubelogin-linux-amd64.zip
-fi
-
-# Check if sshpass is installed
-if ! command -v sshpass &> /dev/null; then
-    print_error "sshpass is not installed. Please install it first:"
-    print_error "Ubuntu/Debian: sudo apt-get install sshpass"
-    print_error "macOS: brew install hudochenkov/sshpass/sshpass"
-    print_error "Windows: Use WSL or install via package manager"
-    exit 1
 fi
 
 # Check if we have the required environment variables
@@ -98,11 +94,65 @@ export ARM_TENANT_ID="$ARM_TENANT_ID"
 
 print_status "Azure credentials exported successfully!"
 
-# Make the deployment script executable
-chmod +x scripts/deploy-to-private-aks.sh
+# Configuration - Use environment variables or defaults
+ACR_NAME="${ACR_NAME:-aksdemoacr2025}"
+RESOURCE_GROUP="${RESOURCE_GROUP:-aks-challenge-rg}"
+AKS_NAME="${AKS_NAME:-aks-demo}"
+STORAGE_ACCOUNT="${STORAGE_ACCOUNT:-aksstatedemo2025}"
 
-# Run the deployment script
-print_status "Starting deployment..."
-./scripts/deploy-to-private-aks.sh
+print_header "Starting deployment process on jumpbox..."
 
+# Install kubectl if not present
+if ! command -v kubectl &> /dev/null; then
+    print_status "Installing kubectl..."
+    curl -LO "https://dl.k8s.io/release/$(curl -L -s https://dl.k8s.io/release/stable.txt)/bin/linux/amd64/kubectl"
+    chmod +x kubectl
+    sudo mv kubectl /usr/local/bin/
+fi
+
+# Get AKS credentials
+print_status "Getting AKS credentials..."
+az aks get-credentials --resource-group $RESOURCE_GROUP --name $AKS_NAME --admin --overwrite-existing
+
+# Get storage account key and create secret
+print_status "Creating Azure Files secret..."
+STORAGE_KEY=$(az storage account keys list --resource-group $RESOURCE_GROUP --account-name $STORAGE_ACCOUNT --query '[0].value' -o tsv)
+
+kubectl create secret generic azure-files-secret \
+    --from-literal=azurestorageaccountname=$STORAGE_ACCOUNT \
+    --from-literal=azurestorageaccountkey=$STORAGE_KEY \
+    --dry-run=client -o yaml | kubectl apply -f -
+
+# Update deployment.yaml with correct ACR name if needed
+print_status "Updating deployment with correct ACR name..."
+cd ~/k8s
+if [ -f "deployment.yaml" ]; then
+    # Replace placeholder ACR name with actual ACR name
+    sed -i "s|<ACR_NAME>|$ACR_NAME|g" deployment.yaml
+fi
+
+# Deploy all manifests from k8s folder
+print_status "Deploying Kubernetes manifests from k8s/ folder..."
+kubectl apply -f .
+
+# Wait for deployment to be ready
+print_status "Waiting for deployment to be ready..."
+kubectl wait --for=condition=available --timeout=300s deployment/nginx-demo
+
+# Get service information
+print_status "Getting service information..."
+kubectl get pods
+kubectl get svc nginx-demo-lb
+
+# Get external IP
+EXTERNAL_IP=$(kubectl get svc nginx-demo-lb -o jsonpath='{.status.loadBalancer.ingress[0].ip}')
+if [ -n "$EXTERNAL_IP" ]; then
+    print_status "Application is accessible at: http://$EXTERNAL_IP"
+    echo "EXTERNAL_IP=$EXTERNAL_IP" > /tmp/external_ip.txt
+else
+    print_warning "External IP not yet assigned. Please check again in a few minutes:"
+    print_warning "kubectl get svc nginx-demo-lb"
+fi
+
+print_status "Deployment completed successfully!"
 print_status "Setup and deployment completed!"
