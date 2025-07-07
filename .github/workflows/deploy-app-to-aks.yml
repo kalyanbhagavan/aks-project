@@ -79,7 +79,7 @@ jobs:
           echo "Copying Kubernetes manifests and scripts to jumpbox..."
           sshpass -p "${{ secrets.JUMPBOX_PASSWORD }}" scp -o StrictHostKeyChecking=no -r ./k8s ./scripts azureuser@${{ secrets.JUMPBOX_IP }}:~/
 
-            - name: Run Setup and Deploy Script on Jumpbox
+      - name: Run Setup and Deploy Script on Jumpbox
         run: |
           echo "Executing setup-and-deploy.sh remotely..."
           sshpass -p "${{ secrets.JUMPBOX_PASSWORD }}" ssh -o StrictHostKeyChecking=no azureuser@${{ secrets.JUMPBOX_IP }} << EOF
@@ -147,6 +147,18 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y sshpass jq
 
+      - name: Verify Scripts Directory
+        run: |
+          echo "Checking scripts directory contents..."
+          ls -la scripts/
+          echo "Checking if deploy-to-private-aks.sh exists..."
+          if [ -f "scripts/deploy-to-private-aks.sh" ]; then
+            echo "✅ deploy-to-private-aks.sh found"
+          else
+            echo "❌ deploy-to-private-aks.sh not found"
+            exit 1
+          fi
+
       - name: Make Script Executable
         run: chmod +x scripts/deploy-to-private-aks.sh
 
@@ -161,6 +173,14 @@ jobs:
           export RESOURCE_GROUP="${{ secrets.RESOURCE_GROUP_NAME }}"
           export AKS_NAME="${{ secrets.AKS_CLUSTER_NAME }}"
           export STORAGE_ACCOUNT="${{ secrets.STORAGE_ACCOUNT_NAME }}"
+
+          # Check if script exists
+          if [ ! -f "scripts/deploy-to-private-aks.sh" ]; then
+            echo "❌ Error: scripts/deploy-to-private-aks.sh not found"
+            echo "Available files in scripts/:"
+            ls -la scripts/
+            exit 1
+          fi
 
           ./scripts/deploy-to-private-aks.sh
 
