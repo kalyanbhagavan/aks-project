@@ -171,6 +171,21 @@ deploy_to_aks() {
             sudo apt-get update && sudo apt-get install -y jq
         fi
 
+        if ! command -v az &> /dev/null; then
+            print_status "Installing Azure CLI..."
+            curl -sL https://aka.ms/InstallAzureCLIDeb | sudo bash
+        fi
+
+        if ! command -v kubelogin &> /dev/null; then
+            print_status "Installing kubelogin..."
+            # Download and install kubelogin
+            KUBELOGIN_VERSION=$(curl -s https://api.github.com/repos/Azure/kubelogin/releases/latest | jq -r '.tag_name')
+            curl -LO "https://github.com/Azure/kubelogin/releases/download/${KUBELOGIN_VERSION}/kubelogin-linux-amd64.zip"
+            unzip kubelogin-linux-amd64.zip
+            sudo mv bin/linux_amd64/kubelogin /usr/local/bin/
+            rm -rf bin kubelogin-linux-amd64.zip
+        fi
+
         # Login to Azure
         print_status "Logging in to Azure..."
         az login --service-principal \

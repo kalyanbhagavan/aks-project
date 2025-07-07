@@ -29,6 +29,23 @@ if ! command -v jq &> /dev/null; then
     sudo apt-get update && sudo apt-get install -y jq
 fi
 
+# Check if Azure CLI is installed
+if ! command -v az &> /dev/null; then
+    print_status "Installing Azure CLI..."
+    curl -sL https://aka.ms/InstallAzureCLIDeb | sudo bash
+fi
+
+# Check if kubelogin is installed
+if ! command -v kubelogin &> /dev/null; then
+    print_status "Installing kubelogin..."
+    # Download and install kubelogin
+    KUBELOGIN_VERSION=$(curl -s https://api.github.com/repos/Azure/kubelogin/releases/latest | jq -r '.tag_name')
+    curl -LO "https://github.com/Azure/kubelogin/releases/download/${KUBELOGIN_VERSION}/kubelogin-linux-amd64.zip"
+    unzip kubelogin-linux-amd64.zip
+    sudo mv bin/linux_amd64/kubelogin /usr/local/bin/
+    rm -rf bin kubelogin-linux-amd64.zip
+fi
+
 # Check if sshpass is installed
 if ! command -v sshpass &> /dev/null; then
     print_error "sshpass is not installed. Please install it first:"
