@@ -178,6 +178,11 @@ deploy_to_aks() {
 
         if ! command -v kubelogin &> /dev/null; then
             print_status "Installing kubelogin..."
+            # Install unzip if not present
+            if ! command -v unzip &> /dev/null; then
+                print_status "Installing unzip..."
+                sudo apt-get update && sudo apt-get install -y unzip
+            fi
             # Download and install kubelogin
             KUBELOGIN_VERSION=$(curl -s https://api.github.com/repos/Azure/kubelogin/releases/latest | jq -r '.tag_name')
             curl -LO "https://github.com/Azure/kubelogin/releases/download/${KUBELOGIN_VERSION}/kubelogin-linux-amd64.zip"
