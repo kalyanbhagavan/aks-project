@@ -1,5 +1,9 @@
 name: Terraform Test and Validation
 
+permissions:
+  contents: read
+  security-events: write
+
 on:
   push:
     branches: [ main, develop, staging ]
@@ -31,22 +35,23 @@ jobs:
         with:
           terraform_version: ${{ env.TF_VERSION }}
 
-      - name: Terraform Format Check
-        run: terraform fmt -check -recursive
+      - name: Terraform Format (Auto-fix)
+        run: terraform fmt -recursive
 
       - name: Terraform Validate
         run: terraform validate
 
-      - name: Terraform Init
+      - name: Terraform Init (no backend)
         run: terraform init -backend=false
 
       - name: Check for Sensitive Data
         run: |
           echo "Checking for sensitive data in Terraform files..."
           if grep -r "password\|secret\|key" *.tf *.tfvars 2>/dev/null | grep -v "variable\|description\|sensitive"; then
-            echo "Warning: Potential sensitive data found in Terraform files"
+            echo "❌ Warning: Potential sensitive data found!"
             exit 1
           fi
+          echo "✅ No sensitive data detected."
 
   security-scan:
     name: 'Security Scan'
@@ -89,28 +94,30 @@ jobs:
         with:
           creds: ${{ secrets.AZURE_CREDENTIALS }}
 
-      - name: Terraform Init
+      - name: Terraform Init (no backend)
         run: terraform init -backend=false
 
       - name: Generate Cost Estimation
         run: |
-          echo "Generating cost estimation..."
           terraform plan -out=tfplan
-          echo "Cost estimation completed"
+          echo "💰 Cost estimation completed (simulated)"
 
-      - name: Comment Cost Estimation
+      - name: Comment Cost Estimation in PR
         uses: actions/github-script@v7
         if: always()
         with:
           github-token: ${{ secrets.GITHUB_TOKEN }}
           script: |
-            const output = `#### Cost Estimation 💰
-            Cost estimation has been generated for this infrastructure change.
+            const output = `#### 💰 Cost Estimation (Terraform)
+            Cost estimation has been generated for this pull request.
 
-            *Note: This is an estimate based on current Azure pricing. Actual costs may vary.*`;
+            > Note: This is a simulated estimate using \`terraform plan\` without pricing API.
+            Actual costs may vary depending on usage and resource pricing.`;
+
             github.rest.issues.createComment({
               issue_number: context.issue.number,
               owner: context.repo.owner,
               repo: context.repo.repo,
               body: output
             })
+``

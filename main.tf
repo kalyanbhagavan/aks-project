@@ -97,6 +97,8 @@ resource "azurerm_role_assignment" "jumpbox_acr_push" {
 
 data "azurerm_client_config" "current" {}
 
+// TEMPORARY: Commented out to avoid duplicate access policy error. Import and re-enable for production.
+/*
 resource "azurerm_key_vault_access_policy" "terraform" {
   key_vault_id = module.keyvault.key_vault_id
   tenant_id    = data.azurerm_client_config.current.tenant_id
@@ -109,6 +111,7 @@ resource "azurerm_key_vault_access_policy" "terraform" {
     "Delete"
   ]
 }
+*/
 
 resource "azurerm_key_vault_secret" "storage_account_key" {
   name         = "storage-account-key"
