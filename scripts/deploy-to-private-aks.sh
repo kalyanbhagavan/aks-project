@@ -29,14 +29,14 @@ print_header() {
     echo -e "${BLUE}[DEPLOYMENT]${NC} $1"
 }
 
-# Configuration - Update these values
-JUMPBOX_IP="172.191.240.240"
-JUMPBOX_USER="azureuser"
-JUMPBOX_PASSWORD="P@ssw0rd123!"  # Update with your actual password
-ACR_NAME="aksdemoacr2025"
-RESOURCE_GROUP="aks-challenge-rg"
-AKS_NAME="aks-demo"
-STORAGE_ACCOUNT="aksstatedemo2025"
+# Configuration - Use environment variables or GitHub secrets
+JUMPBOX_IP="${JUMPBOX_IP:-172.191.240.240}"
+JUMPBOX_USER="${JUMPBOX_USER:-azureuser}"
+JUMPBOX_PASSWORD="${JUMPBOX_PASSWORD:-P@ssw0rd123!}"
+ACR_NAME="${ACR_NAME:-aksdemoacr2025}"
+RESOURCE_GROUP="${RESOURCE_GROUP:-aks-challenge-rg}"
+AKS_NAME="${AKS_NAME:-aks-demo}"
+STORAGE_ACCOUNT="${STORAGE_ACCOUNT:-aksstatedemo2025}"
 DOCKER_IMAGE="nginx-demo"
 DOCKER_TAG="latest"
 

@@ -23,6 +23,12 @@ print_error() {
     echo -e "${RED}[ERROR]${NC} $1"
 }
 
+# Check if jq is installed
+if ! command -v jq &> /dev/null; then
+    print_status "Installing jq..."
+    sudo apt-get update && sudo apt-get install -y jq
+fi
+
 # Check if sshpass is installed
 if ! command -v sshpass &> /dev/null; then
     print_error "sshpass is not installed. Please install it first:"
@@ -32,15 +38,15 @@ if ! command -v sshpass &> /dev/null; then
     exit 1
 fi
 
-# Login to Azure using service principal credentials
-print_status "Logging in to Azure using service principal..."
-
 # Check if we have the required environment variables
 if [ -z "$ARM_CLIENT_ID" ] || [ -z "$ARM_CLIENT_SECRET" ] || [ -z "$ARM_SUBSCRIPTION_ID" ] || [ -z "$ARM_TENANT_ID" ]; then
     print_error "Missing required Azure credentials environment variables."
     print_error "Please set ARM_CLIENT_ID, ARM_CLIENT_SECRET, ARM_SUBSCRIPTION_ID, and ARM_TENANT_ID"
     exit 1
 fi
+
+# Login to Azure using service principal credentials
+print_status "Logging in to Azure using service principal..."
 
 # Login using service principal
 az login --service-principal \
@@ -54,40 +60,21 @@ print_status "Successfully logged in to Azure using service principal"
 az account set --subscription "$ARM_SUBSCRIPTION_ID"
 print_status "Set subscription to: $ARM_SUBSCRIPTION_ID"
 
-# Check if Azure CLI is logged in
+# Verify login was successful
 if ! az account show &> /dev/null; then
-    print_warning "Not logged in to Azure CLI. Please run 'az login' first."
+    print_error "Failed to login to Azure CLI. Please check your credentials."
     exit 1
 fi
 
-# Get Azure credentials
-print_status "Getting Azure credentials..."
+print_status "Azure login verified successfully!"
 
-# Get current subscription
-SUBSCRIPTION_ID=$(az account show --query id -o tsv)
-TENANT_ID=$(az account show --query tenantId -o tsv)
+# Export credentials for the deployment script
+export ARM_CLIENT_ID="$ARM_CLIENT_ID"
+export ARM_CLIENT_SECRET="$ARM_CLIENT_SECRET"
+export ARM_SUBSCRIPTION_ID="$ARM_SUBSCRIPTION_ID"
+export ARM_TENANT_ID="$ARM_TENANT_ID"
 
-# Get service principal credentials
-print_status "Getting service principal credentials..."
-SP_INFO=$(az ad sp list --display-name "github-actions-terraform" --query "[0]" -o json)
-
-if [ "$SP_INFO" == "null" ] || [ -z "$SP_INFO" ]; then
-    print_error "Service principal 'github-actions-terraform' not found."
-    print_error "Please create it first with:"
-    print_error "az ad sp create-for-rbac --name 'github-actions-terraform' --role contributor --scopes /subscriptions/$SUBSCRIPTION_ID --sdk-auth"
-    exit 1
-fi
-
-CLIENT_ID=$(echo "$SP_INFO" | jq -r '.appId')
-CLIENT_SECRET=$(az ad sp credential reset --id "$CLIENT_ID" --query password -o tsv)
-
-# Export credentials
-export ARM_CLIENT_ID="$CLIENT_ID"
-export ARM_CLIENT_SECRET="$CLIENT_SECRET"
-export ARM_SUBSCRIPTION_ID="$SUBSCRIPTION_ID"
-export ARM_TENANT_ID="$TENANT_ID"
-
-print_status "Azure credentials set successfully!"
+print_status "Azure credentials exported successfully!"
 
 # Make the deployment script executable
 chmod +x scripts/deploy-to-private-aks.sh
