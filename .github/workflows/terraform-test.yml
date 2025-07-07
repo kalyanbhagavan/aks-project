@@ -1,18 +1,14 @@
 name: Terraform Test and Validation
 
-permissions:
-  contents: read
-  security-events: write
-
 on:
   push:
-    branches: [ main, develop, staging ]
+    branches: [main, develop, staging]
     paths:
       - '**.tf'
       - '**.tfvars'
       - '.github/workflows/terraform-test.yml'
   pull_request:
-    branches: [ main, develop, staging ]
+    branches: [main, develop, staging]
     paths:
       - '**.tf'
       - '**.tfvars'
@@ -23,11 +19,11 @@ env:
 
 jobs:
   validate:
-    name: 'Terraform Validate'
+    name: 'Terraform Format & Validate'
     runs-on: ubuntu-latest
 
     steps:
-      - name: Checkout
+      - name: Checkout Code
         uses: actions/checkout@v4
 
       - name: Setup Terraform
@@ -35,33 +31,34 @@ jobs:
         with:
           terraform_version: ${{ env.TF_VERSION }}
 
-      - name: Terraform Format (Auto-fix)
-        run: terraform fmt -recursive
+      - name: Terraform Init
+        run: terraform init
+
+      - name: Terraform Format Check
+        run: terraform fmt -check -recursive
 
       - name: Terraform Validate
         run: terraform validate
 
-      - name: Terraform Init (no backend)
-        run: terraform init -backend=false
-
       - name: Check for Sensitive Data
         run: |
-          echo "Checking for sensitive data in Terraform files..."
+          echo "🔍 Scanning for hardcoded sensitive data..."
           if grep -r "password\|secret\|key" *.tf *.tfvars 2>/dev/null | grep -v "variable\|description\|sensitive"; then
-            echo "❌ Warning: Potential sensitive data found!"
+            echo "❌ Potential sensitive data found"
             exit 1
+          else
+            echo "✅ No hardcoded sensitive data detected."
           fi
-          echo "✅ No sensitive data detected."
 
   security-scan:
-    name: 'Security Scan'
+    name: 'Trivy Security Scan'
     runs-on: ubuntu-latest
 
     steps:
-      - name: Checkout
+      - name: Checkout Code
         uses: actions/checkout@v4
 
-      - name: Run Trivy vulnerability scanner
+      - name: Run Trivy config scan
         uses: aquasecurity/trivy-action@master
         with:
           scan-type: 'config'
@@ -69,55 +66,8 @@ jobs:
           format: 'sarif'
           output: 'trivy-results.sarif'
 
-      - name: Upload Trivy scan results to GitHub Security tab
+      - name: Upload Trivy results to GitHub
         uses: github/codeql-action/upload-sarif@v3
         if: always()
         with:
           sarif_file: 'trivy-results.sarif'
-
-  cost-estimation:
-    name: 'Cost Estimation'
-    runs-on: ubuntu-latest
-    if: github.event_name == 'pull_request'
-
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Setup Terraform
-        uses: hashicorp/setup-terraform@v3
-        with:
-          terraform_version: ${{ env.TF_VERSION }}
-
-      - name: Azure Login
-        uses: azure/login@v2
-        with:
-          creds: ${{ secrets.AZURE_CREDENTIALS }}
-
-      - name: Terraform Init (no backend)
-        run: terraform init -backend=false
-
-      - name: Generate Cost Estimation
-        run: |
-          terraform plan -out=tfplan
-          echo "💰 Cost estimation completed (simulated)"
-
-      - name: Comment Cost Estimation in PR
-        uses: actions/github-script@v7
-        if: always()
-        with:
-          github-token: ${{ secrets.GITHUB_TOKEN }}
-          script: |
-            const output = `#### 💰 Cost Estimation (Terraform)
-            Cost estimation has been generated for this pull request.
-
-            > Note: This is a simulated estimate using \`terraform plan\` without pricing API.
-            Actual costs may vary depending on usage and resource pricing.`;
-
-            github.rest.issues.createComment({
-              issue_number: context.issue.number,
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              body: output
-            })
-
