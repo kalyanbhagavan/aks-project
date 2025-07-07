@@ -11,3 +11,4 @@ kubernetes_version    = "1.31.9"
 admin_group_object_ids = ["00000000-0000-0000-0000-000000000000"]
 jumpbox_vm_name       = "aks-jumpbox"
 jumpbox_admin_username = "azureuser"
+jumpbox_admin_password = "P@ssw0rd123!"
