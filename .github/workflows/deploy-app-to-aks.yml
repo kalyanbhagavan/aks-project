@@ -55,6 +55,11 @@ jobs:
           echo "ARM_TENANT_ID=$(echo '${{ secrets.AZURE_CREDENTIALS }}' | jq -r .tenantId)" >> $GITHUB_ENV
         shell: bash
 
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: "1.5.0"
+
       - name: Get Terraform Outputs
         id: terraform-outputs
         run: |
@@ -73,14 +78,31 @@ jobs:
 
           # Initialize and get outputs
           terraform init
+
+          # Check if state exists
+          if ! terraform show > /dev/null 2>&1; then
+            echo "Error: Terraform state not found or accessible"
+            exit 1
+          fi
+
           terraform output -json > outputs.json
 
-          # Extract values
-          JUMPBOX_IP=$(terraform output -raw jumpbox_public_ip)
-          ACR_NAME=$(terraform output -raw acr_name)
-          RESOURCE_GROUP=$(terraform output -raw resource_group_name)
-          AKS_NAME=$(terraform output -raw aks_name)
-          STORAGE_ACCOUNT=$(terraform output -raw storage_account_name)
+          # Extract values with error handling
+          JUMPBOX_IP=$(terraform output -raw jumpbox_public_ip 2>/dev/null || echo "")
+          ACR_NAME=$(terraform output -raw acr_name 2>/dev/null || echo "")
+          RESOURCE_GROUP=$(terraform output -raw resource_group_name 2>/dev/null || echo "")
+          AKS_NAME=$(terraform output -raw aks_name 2>/dev/null || echo "")
+          STORAGE_ACCOUNT=$(terraform output -raw storage_account_name 2>/dev/null || echo "")
+
+          # Validate required outputs
+          if [[ -z "$JUMPBOX_IP" || -z "$ACR_NAME" || -z "$RESOURCE_GROUP" || -z "$AKS_NAME" ]]; then
+            echo "Error: Missing required Terraform outputs"
+            echo "JUMPBOX_IP: $JUMPBOX_IP"
+            echo "ACR_NAME: $ACR_NAME"
+            echo "RESOURCE_GROUP: $RESOURCE_GROUP"
+            echo "AKS_NAME: $AKS_NAME"
+            exit 1
+          fi
 
           echo "jumpbox_ip=$JUMPBOX_IP" >> $GITHUB_OUTPUT
           echo "acr_name=$ACR_NAME" >> $GITHUB_OUTPUT
@@ -97,6 +119,11 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y sshpass
 
+      - name: Test Jumpbox Connectivity
+        run: |
+          echo "Testing SSH connectivity to jumpbox..."
+          timeout 30 sshpass -p "${{ secrets.JUMPBOX_PASSWORD }}" ssh -o StrictHostKeyChecking=no -o ConnectTimeout=10 azureuser@${{ steps.terraform-outputs.outputs.jumpbox_ip }} "echo 'Connection successful'"
+
       - name: Build and Push Docker Image
         if: ${{ !github.event.inputs.skip_docker_build }}
         run: |
@@ -110,7 +137,7 @@ jobs:
           CMD ["nginx", "-g", "daemon off;"]
           EOF
 
-            # Create a simple index.html
+            # Create a simple index.html with properly escaped variables
             cat > index.html << 'EOF'
           <!DOCTYPE html>
           <html>
@@ -128,37 +155,169 @@ jobs:
                   <p class="success">✅ Successfully deployed to private AKS cluster!</p>
                   <p>This application is running on a private Azure Kubernetes Service cluster.</p>
                   <p>Deployed via GitHub Actions and jumpbox with secure access patterns.</p>
-                  <p><strong>Commit:</strong> ${{ github.sha }}</p>
-                  <p><strong>Branch:</strong> ${{ github.ref_name }}</p>
+                  <p><strong>Commit:</strong> COMMIT_SHA</p>
+                  <p><strong>Branch:</strong> BRANCH_NAME</p>
               </div>
           </body>
           </html>
           EOF
+
+            # Replace placeholders with actual values
+            sed -i "s/COMMIT_SHA/${{ github.sha }}/g" index.html
+            sed -i "s/BRANCH_NAME/${{ github.ref_name }}/g" index.html
           fi
 
           # Login to ACR
           az acr login --name ${{ steps.terraform-outputs.outputs.acr_name }}
 
-          # Build and push image
-          docker build -t ${{ steps.terraform-outputs.outputs.acr_name }}.azurecr.io/nginx-demo:latest .
+          # Build and push image with build timestamp
+          IMAGE_TAG="${{ github.sha }}-$(date +%s)"
+          docker build -t ${{ steps.terraform-outputs.outputs.acr_name }}.azurecr.io/nginx-demo:$IMAGE_TAG .
+          docker tag ${{ steps.terraform-outputs.outputs.acr_name }}.azurecr.io/nginx-demo:$IMAGE_TAG ${{ steps.terraform-outputs.outputs.acr_name }}.azurecr.io/nginx-demo:latest
+          docker push ${{ steps.terraform-outputs.outputs.acr_name }}.azurecr.io/nginx-demo:$IMAGE_TAG
           docker push ${{ steps.terraform-outputs.outputs.acr_name }}.azurecr.io/nginx-demo:latest
 
-      - name: Copy k8s manifests to jumpbox
+          echo "image_tag=$IMAGE_TAG" >> $GITHUB_OUTPUT
+
+      - name: Prepare deployment files
         run: |
+          # Create k8s directory if it doesn't exist
+          mkdir -p k8s
+
+          # Create deployment manifest if it doesn't exist
+          if [ ! -f "k8s/deployment.yaml" ]; then
+            cat > k8s/deployment.yaml << 'EOF'
+          apiVersion: apps/v1
+          kind: Deployment
+          metadata:
+            name: nginx-demo
+            labels:
+              app: nginx-demo
+          spec:
+            replicas: 2
+            selector:
+              matchLabels:
+                app: nginx-demo
+            template:
+              metadata:
+                labels:
+                  app: nginx-demo
+              spec:
+                containers:
+                - name: nginx-demo
+                  image: ACR_NAME.azurecr.io/nginx-demo:latest
+                  ports:
+                  - containerPort: 80
+                  resources:
+                    requests:
+                      cpu: 100m
+                      memory: 128Mi
+                    limits:
+                      cpu: 500m
+                      memory: 512Mi
+          ---
+          apiVersion: v1
+          kind: Service
+          metadata:
+            name: nginx-demo-lb
+            labels:
+              app: nginx-demo
+          spec:
+            type: LoadBalancer
+            ports:
+            - port: 80
+              targetPort: 80
+            selector:
+              app: nginx-demo
+          EOF
+
+            # Replace ACR name placeholder
+            sed -i "s/ACR_NAME/${{ steps.terraform-outputs.outputs.acr_name }}/g" k8s/deployment.yaml
+          fi
+
+          # Create deployment script if it doesn't exist
+          mkdir -p scripts
+          cat > scripts/deploy-to-private-aks.sh << 'EOF'
+          #!/bin/bash
+          set -e
+
+          echo "Starting deployment to private AKS cluster..."
+
+          # Install Azure CLI if not present
+          if ! command -v az &> /dev/null; then
+              echo "Installing Azure CLI..."
+              curl -sL https://aka.ms/InstallAzureCLIDeb | sudo bash
+          fi
+
+          # Install kubectl if not present
+          if ! command -v kubectl &> /dev/null; then
+              echo "Installing kubectl..."
+              curl -LO "https://dl.k8s.io/release/$(curl -L -s https://dl.k8s.io/release/stable.txt)/bin/linux/amd64/kubectl"
+              sudo install -o root -g root -m 0755 kubectl /usr/local/bin/kubectl
+          fi
+
+          # Login to Azure
+          echo "Logging in to Azure..."
+          az login --service-principal -u "$ARM_CLIENT_ID" -p "$ARM_CLIENT_SECRET" --tenant "$ARM_TENANT_ID"
+          az account set --subscription "$ARM_SUBSCRIPTION_ID"
+
+          # Get AKS credentials
+          echo "Getting AKS credentials..."
+          az aks get-credentials --resource-group "$RESOURCE_GROUP" --name "$AKS_NAME" --overwrite-existing
+
+          # Test kubectl connection
+          echo "Testing kubectl connection..."
+          kubectl get nodes
+
+          # Apply Kubernetes manifests
+          echo "Applying Kubernetes manifests..."
+          kubectl apply -f ~/k8s/
+
+          # Wait for deployment to be ready
+          echo "Waiting for deployment to be ready..."
+          kubectl wait --for=condition=available --timeout=300s deployment/nginx-demo
+
+          # Wait for LoadBalancer service to get external IP
+          echo "Waiting for LoadBalancer service to get external IP..."
+          for i in {1..20}; do
+              EXTERNAL_IP=$(kubectl get svc nginx-demo-lb -o jsonpath='{.status.loadBalancer.ingress[0].ip}' 2>/dev/null || echo "")
+              if [[ -n "$EXTERNAL_IP" && "$EXTERNAL_IP" != "<none>" ]]; then
+                  echo "External IP assigned: $EXTERNAL_IP"
+                  break
+              fi
+              echo "Waiting for external IP... (attempt $i/20)"
+              sleep 30
+          done
+
+          # Get service status
+          echo "Service status:"
+          kubectl get svc nginx-demo-lb
+
+          # Get pod status
+          echo "Pod status:"
+          kubectl get pods -l app=nginx-demo
+
+          echo "Deployment completed successfully!"
+          EOF
+
+          chmod +x scripts/deploy-to-private-aks.sh
+
+      - name: Copy files to jumpbox
+        run: |
+          echo "Copying k8s manifests to jumpbox..."
           sshpass -p "${{ secrets.JUMPBOX_PASSWORD }}" scp -o StrictHostKeyChecking=no -r ./k8s azureuser@${{ steps.terraform-outputs.outputs.jumpbox_ip }}:~/
 
-      - name: Copy deployment script to jumpbox
-        run: |
+          echo "Copying deployment script to jumpbox..."
           sshpass -p "${{ secrets.JUMPBOX_PASSWORD }}" scp -o StrictHostKeyChecking=no ./scripts/deploy-to-private-aks.sh azureuser@${{ steps.terraform-outputs.outputs.jumpbox_ip }}:~/
 
-      - name: Deploy to AKS via jumpbox using script
+      - name: Deploy to AKS via jumpbox
         run: |
           sshpass -p "${{ secrets.JUMPBOX_PASSWORD }}" ssh -o StrictHostKeyChecking=no azureuser@${{ steps.terraform-outputs.outputs.jumpbox_ip }} << 'SSH_EOF'
             # Set environment variables for the script
-            export ARM_CLIENT_ID="$ARM_CLIENT_ID"
-            export ARM_CLIENT_SECRET="$ARM_CLIENT_SECRET"
-            export ARM_SUBSCRIPTION_ID="$ARM_SUBSCRIPTION_ID"
-            export ARM_TENANT_ID="$ARM_TENANT_ID"
+            export ARM_CLIENT_ID="${{ env.ARM_CLIENT_ID }}"
+            export ARM_CLIENT_SECRET="${{ env.ARM_CLIENT_SECRET }}"
+            export ARM_SUBSCRIPTION_ID="${{ env.ARM_SUBSCRIPTION_ID }}"
+            export ARM_TENANT_ID="${{ env.ARM_TENANT_ID }}"
 
             # Set configuration variables
             export ACR_NAME="${{ steps.terraform-outputs.outputs.acr_name }}"
@@ -169,15 +328,29 @@ jobs:
             # Make script executable and run it
             chmod +x ~/deploy-to-private-aks.sh
             ~/deploy-to-private-aks.sh
-SSH_EOF
+          SSH_EOF
 
       - name: Get Application URL
         id: app-url
         run: |
-          EXTERNAL_IP=$(sshpass -p "${{ secrets.JUMPBOX_PASSWORD }}" ssh -o StrictHostKeyChecking=no azureuser@${{ steps.terraform-outputs.outputs.jumpbox_ip }} \
-            "kubectl get svc nginx-demo-lb -o jsonpath='{.status.loadBalancer.ingress[0].ip}'")
-          echo "app_url=http://$EXTERNAL_IP" >> $GITHUB_OUTPUT
-          echo "Application URL: http://$EXTERNAL_IP"
+          echo "Getting application URL..."
+          for i in {1..10}; do
+              EXTERNAL_IP=$(sshpass -p "${{ secrets.JUMPBOX_PASSWORD }}" ssh -o StrictHostKeyChecking=no azureuser@${{ steps.terraform-outputs.outputs.jumpbox_ip }} \
+                "kubectl get svc nginx-demo-lb -o jsonpath='{.status.loadBalancer.ingress[0].ip}' 2>/dev/null || echo ''")
+
+              if [[ -n "$EXTERNAL_IP" && "$EXTERNAL_IP" != "<none>" && "$EXTERNAL_IP" != "null" ]]; then
+                  echo "app_url=http://$EXTERNAL_IP" >> $GITHUB_OUTPUT
+                  echo "Application URL: http://$EXTERNAL_IP"
+                  break
+              fi
+              echo "Waiting for LoadBalancer IP... (attempt $i/10)"
+              sleep 30
+          done
+
+          if [[ -z "$EXTERNAL_IP" || "$EXTERNAL_IP" == "<none>" || "$EXTERNAL_IP" == "null" ]]; then
+              echo "Warning: LoadBalancer IP not available yet"
+              echo "app_url=LoadBalancer IP pending..." >> $GITHUB_OUTPUT
+          fi
 
       - name: Comment on PR
         uses: actions/github-script@v7
@@ -215,7 +388,7 @@ SSH_EOF
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "**Application URL:** ${{ steps.app-url.outputs.app_url }}" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
-          echo "**Infrastructure Details:" >> $GITHUB_STEP_SUMMARY
+          echo "**Infrastructure Details:**" >> $GITHUB_STEP_SUMMARY
           echo "- AKS Cluster: ${{ steps.terraform-outputs.outputs.aks_name }}" >> $GITHUB_STEP_SUMMARY
           echo "- ACR: ${{ steps.terraform-outputs.outputs.acr_name }}" >> $GITHUB_STEP_SUMMARY
           echo "- Resource Group: ${{ steps.terraform-outputs.outputs.resource_group }}" >> $GITHUB_STEP_SUMMARY
