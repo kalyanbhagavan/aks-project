@@ -75,8 +75,3 @@ resource "azurerm_key_vault_secret" "github_runner_token" {
     ignore_changes = [value]
   }
 }
-
-output "key_vault_id" {
-  description = "Key Vault resource ID."
-  value       = azurerm_key_vault.main.id
-}
