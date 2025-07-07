@@ -117,5 +117,4 @@ resource "azurerm_key_vault_secret" "storage_account_key" {
   name         = "storage-account-key"
   value        = module.storage.storage_account_primary_access_key
   key_vault_id = module.keyvault.key_vault_id
-  depends_on = [azurerm_key_vault_access_policy.terraform]
 }
