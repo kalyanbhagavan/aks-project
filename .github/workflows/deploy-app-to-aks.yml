@@ -31,14 +31,36 @@ jobs:
 
       - name: Validate Required Secrets
         run: |
-          required_secrets=("JUMPBOX_IP" "JUMPBOX_PASSWORD")
-          for key in "${required_secrets[@]}"; do
-            if [[ -z "${{ secrets[$key] }}" ]]; then
-              echo "❌ Missing required secret: $key"
-              exit 1
-            fi
-          done
-          echo "✅ All required secrets are available."
+          if [[ -z "${{ secrets.JUMPBOX_IP }}" ]]; then
+            echo "❌ Error: JUMPBOX_IP secret is required"
+            exit 1
+          fi
+          if [[ -z "${{ secrets.JUMPBOX_PASSWORD }}" ]]; then
+            echo "❌ Error: JUMPBOX_PASSWORD secret is required"
+            exit 1
+          fi
+          if [[ -z "${{ secrets.ACR_NAME }}" ]]; then
+            echo "❌ Error: ACR_NAME secret is required"
+            exit 1
+          fi
+          if [[ -z "${{ secrets.ACR_USER }}" ]]; then
+            echo "❌ Error: ACR_USER secret is required"
+            exit 1
+          fi
+          if [[ -z "${{ secrets.ACR_PASSWORD }}" ]]; then
+            echo "❌ Error: ACR_PASSWORD secret is required"
+            exit 1
+          fi
+          if [[ -z "${{ secrets.RESOURCE_GROUP_NAME }}" ]]; then
+            echo "❌ Error: RESOURCE_GROUP_NAME secret is required"
+            exit 1
+          fi
+          if [[ -z "${{ secrets.AKS_CLUSTER_NAME }}" ]]; then
+            echo "❌ Error: AKS_CLUSTER_NAME secret is required"
+            exit 1
+          fi
+          echo "✅ All required secrets are present"
+
 
       - name: Install sshpass
         run: sudo apt-get update && sudo apt-get install -y sshpass
