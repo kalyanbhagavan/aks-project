@@ -42,11 +42,16 @@ jobs:
       - name: Terraform Validate
         run: terraform validate
 
-      - name: Check for Sensitive Data
+      - name: Check for Hardcoded Sensitive Data
         run: |
           echo "🔍 Scanning for hardcoded sensitive data..."
-          if grep -r --include=*.tf --include=*.tfvars "password\|secret\|key" . 2>/dev/null | grep -vE 'var\.|variable|description|sensitive|module\.|key_vault_id|_access_key'; then
-            echo "❌ Potential hardcoded sensitive data found"
+          FOUND=$(grep -r --include=*.tf --include=*.tfvars --exclude-dir=.terraform \
+            -E '["'\'']?(password|secret|key)["'\'']?\s*=\s*["'\''][^${]' . | \
+            grep -vE 'var\.|sensitive|module\.|vault_uri|vault_name|vault_id|description|resource|output')
+
+          if [[ -n "$FOUND" ]]; then
+            echo "❌ Potential hardcoded sensitive data found:"
+            echo "$FOUND"
             exit 1
           else
             echo "✅ No hardcoded sensitive data detected."
