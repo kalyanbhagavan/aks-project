@@ -32,6 +32,28 @@ if ! command -v sshpass &> /dev/null; then
     exit 1
 fi
 
+# Login to Azure using service principal credentials
+print_status "Logging in to Azure using service principal..."
+
+# Check if we have the required environment variables
+if [ -z "$ARM_CLIENT_ID" ] || [ -z "$ARM_CLIENT_SECRET" ] || [ -z "$ARM_SUBSCRIPTION_ID" ] || [ -z "$ARM_TENANT_ID" ]; then
+    print_error "Missing required Azure credentials environment variables."
+    print_error "Please set ARM_CLIENT_ID, ARM_CLIENT_SECRET, ARM_SUBSCRIPTION_ID, and ARM_TENANT_ID"
+    exit 1
+fi
+
+# Login using service principal
+az login --service-principal \
+    --username "$ARM_CLIENT_ID" \
+    --password "$ARM_CLIENT_SECRET" \
+    --tenant "$ARM_TENANT_ID"
+
+print_status "Successfully logged in to Azure using service principal"
+
+# Set the subscription
+az account set --subscription "$ARM_SUBSCRIPTION_ID"
+print_status "Set subscription to: $ARM_SUBSCRIPTION_ID"
+
 # Check if Azure CLI is logged in
 if ! az account show &> /dev/null; then
     print_warning "Not logged in to Azure CLI. Please run 'az login' first."
