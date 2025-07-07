@@ -5,8 +5,10 @@ This folder contains a minimal nginx demo application that can be easily deploye
 ## Files
 
 - `deployment.yaml` - Main nginx application deployment
-- `service.yaml` - LoadBalancer service to expose the app
+- `service.yaml` - ClusterIP service for internal communication
 - `rbac.yaml` - Basic RBAC roles and bindings
+- `ingress-controller.yaml` - NGINX Ingress Controller deployment
+- `ingress.yaml` - Ingress resource for external access
 - `deploy.sh` - Script to deploy the application
 - `destroy.sh` - Script to remove the application
 - `status.sh` - Script to check application status
@@ -71,7 +73,9 @@ The deployment uses the ACR name `aksdemoacr2025.azurecr.io` from your terraform
 ## What Gets Deployed
 
 - **2 nginx pods** with resource limits
-- **LoadBalancer service** exposing port 80
+- **ClusterIP service** for internal communication
+- **NGINX Ingress Controller** for external access
+- **Ingress resource** for traffic routing
 - **RBAC roles** for basic access control
 - **External IP** for accessing the application
 

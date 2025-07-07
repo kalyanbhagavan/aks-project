@@ -46,7 +46,16 @@ kubectl get pods -l app=nginx-demo
 
 echo
 print_header "=== SERVICE STATUS ==="
-kubectl get svc nginx-demo-lb
+kubectl get svc nginx-demo-service
+
+echo
+print_header "=== INGRESS CONTROLLER STATUS ==="
+kubectl get pods -n ingress-nginx
+kubectl get svc -n ingress-nginx
+
+echo
+print_header "=== INGRESS STATUS ==="
+kubectl get ingress
 
 echo
 print_header "=== DEPLOYMENT STATUS ==="

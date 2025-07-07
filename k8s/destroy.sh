@@ -48,11 +48,17 @@ if [[ ! $REPLY =~ ^[Yy]$ ]]; then
 fi
 
 # Delete resources in reverse order
+print_status "Deleting Ingress..."
+kubectl delete ingress nginx-demo-ingress --ignore-not-found=true
+
+print_status "Deleting Ingress Controller..."
+kubectl delete -f ingress-controller.yaml --ignore-not-found=true
+
 print_status "Deleting Deployment..."
 kubectl delete deployment nginx-demo --ignore-not-found=true
 
 print_status "Deleting Service..."
-kubectl delete service nginx-demo-lb --ignore-not-found=true
+kubectl delete service nginx-demo-service --ignore-not-found=true
 
 print_status "Deleting RBAC resources..."
 kubectl delete rolebinding dev-team-binding --ignore-not-found=true

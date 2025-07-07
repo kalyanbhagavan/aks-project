@@ -50,22 +50,32 @@ kubectl apply -f service.yaml
 print_status "Deploying Deployment..."
 kubectl apply -f deployment.yaml
 
+print_status "Deploying NGINX Ingress Controller..."
+kubectl apply -f ingress-controller.yaml
+
+print_status "Waiting for Ingress Controller to be ready..."
+kubectl wait --for=condition=available --timeout=300s deployment/nginx-ingress-controller -n ingress-nginx
+
+print_status "Deploying Ingress..."
+kubectl apply -f ingress.yaml
+
 print_status "Waiting for deployment to be ready..."
 kubectl wait --for=condition=available --timeout=300s deployment/nginx-demo
 
 print_status "Getting service information..."
 kubectl get pods
-kubectl get svc nginx-demo-lb
+kubectl get svc nginx-demo-service
 
-# Get external IP
-EXTERNAL_IP=$(kubectl get svc nginx-demo-lb -o jsonpath='{.status.loadBalancer.ingress[0].ip}')
+# Get Ingress Controller external IP
+EXTERNAL_IP=$(kubectl get svc ingress-nginx-controller -n ingress-nginx -o jsonpath='{.status.loadBalancer.ingress[0].ip}')
 if [ -n "$EXTERNAL_IP" ]; then
     print_status "✅ Application deployed successfully!"
-    print_status "🌐 Application URL: http://$EXTERNAL_IP"
+    print_status "🌐 Ingress Controller URL: http://$EXTERNAL_IP"
+    print_status "🌐 Application URL: http://$EXTERNAL_IP (add Host header: nginx-demo.local)"
     echo "EXTERNAL_IP=$EXTERNAL_IP" > /tmp/external_ip.txt
 else
     print_warning "External IP not yet assigned. Please check again in a few minutes:"
-    print_warning "kubectl get svc nginx-demo-lb"
+    print_warning "kubectl get svc ingress-nginx-controller -n ingress-nginx"
 fi
 
 print_status "Deployment completed!"
