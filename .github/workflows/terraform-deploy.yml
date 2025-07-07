@@ -150,6 +150,8 @@ jobs:
       - name: Terraform Apply
         if: github.ref == 'refs/heads/main' && github.event_name == 'push' || github.event.inputs.action == 'apply'
         run: terraform apply -auto-approve tfplan
+        env:
+          TF_VAR_jumpbox_admin_password: ${{ secrets.JUMPBOX_ADMIN_PASSWORD }}
 
       - name: Terraform Destroy
         if: github.event.inputs.action == 'destroy'
