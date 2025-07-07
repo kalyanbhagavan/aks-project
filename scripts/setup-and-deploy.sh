@@ -126,6 +126,59 @@ kubectl create secret generic azure-files-secret \
     --from-literal=azurestorageaccountname="$STORAGE_ACCOUNT" \
     --from-literal=azurestorageaccountkey="$STORAGE_KEY"
 
+# Setup Azure Files share
+print_status "Setting up Azure Files share..."
+SHARE_NAME="staticweb"
+
+# Create the file share if it doesn't exist
+if ! az storage share exists --account-name $STORAGE_ACCOUNT --name $SHARE_NAME --query exists -o tsv 2>/dev/null; then
+    print_status "Creating Azure Files share '$SHARE_NAME'..."
+    az storage share create \
+        --account-name $STORAGE_ACCOUNT \
+        --name $SHARE_NAME \
+        --quota 1
+
+    # Upload sample content
+    print_status "Uploading sample static content..."
+    cat > /tmp/sample-index.html << 'EOF'
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Static Assets Demo</title>
+    <style>
+        body { font-family: Arial, sans-serif; text-align: center; margin-top: 50px; }
+        .container { max-width: 600px; margin: 0 auto; }
+        .success { color: green; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>📁 Static Assets from Azure Files</h1>
+        <p class="success">✅ Successfully loaded from Azure Files share!</p>
+        <p>This content is served from the Azure Files share mounted in the pod.</p>
+        <p><strong>Share Name:</strong> staticweb</p>
+        <p><strong>Storage Account:</strong> STORAGE_ACCOUNT_PLACEHOLDER</p>
+    </div>
+</body>
+</html>
+EOF
+
+    # Replace placeholder with actual storage account name
+    sed -i "s/STORAGE_ACCOUNT_PLACEHOLDER/$STORAGE_ACCOUNT/g" /tmp/sample-index.html
+
+    # Upload the file to the share
+    az storage file upload \
+        --account-name $STORAGE_ACCOUNT \
+        --share-name $SHARE_NAME \
+        --source /tmp/sample-index.html \
+        --path index.html
+
+    rm -f /tmp/sample-index.html
+    print_status "Sample content uploaded to Azure Files share!"
+else
+    print_status "Azure Files share '$SHARE_NAME' already exists"
+fi
+
 # Update deployment.yaml with correct ACR name if needed
 print_status "Updating deployment with correct ACR name..."
 cd ~/k8s
