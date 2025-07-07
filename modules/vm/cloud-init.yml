@@ -1,0 +1,318 @@
+#cloud-config
+package_update: true
+package_upgrade: true
+
+# Enable logging for debugging
+output: {all: '| tee -a /var/log/cloud-init-output.log'}
+
+packages:
+  - curl
+  - wget
+  - git
+  - unzip
+  - apt-transport-https
+  - ca-certificates
+  - gnupg
+  - lsb-release
+
+runcmd:
+  # Log start time
+  - echo "$(date): Starting cloud-init runcmd" >> /var/log/cloud-init-custom.log
+
+  # Install Docker
+  - echo "$(date): Installing Docker" >> /var/log/cloud-init-custom.log
+  - curl -fsSL https://download.docker.com/linux/ubuntu/gpg | gpg --dearmor -o /usr/share/keyrings/docker-archive-keyring.gpg
+  - echo "deb [arch=amd64 signed-by=/usr/share/keyrings/docker-archive-keyring.gpg] https://download.docker.com/linux/ubuntu $(lsb_release -cs) stable" | tee /etc/apt/sources.list.d/docker.list > /dev/null
+  - apt-get update
+  - apt-get install -y docker-ce docker-ce-cli containerd.io
+  - usermod -aG docker ${admin_username}
+  - systemctl enable docker
+  - systemctl start docker
+  - echo "$(date): Docker installation completed" >> /var/log/cloud-init-custom.log
+
+  # Install Azure CLI
+  - echo "$(date): Installing Azure CLI" >> /var/log/cloud-init-custom.log
+  - curl -sL https://aka.ms/InstallAzureCLIDeb | bash
+  - echo "$(date): Azure CLI installation completed" >> /var/log/cloud-init-custom.log
+
+  # Install kubectl
+  - echo "$(date): Installing kubectl" >> /var/log/cloud-init-custom.log
+  - curl -LO "https://dl.k8s.io/release/$(curl -L -s https://dl.k8s.io/release/stable.txt)/bin/linux/amd64/kubectl"
+  - chmod +x kubectl
+  - mv kubectl /usr/local/bin/
+  - echo "$(date): kubectl installation completed" >> /var/log/cloud-init-custom.log
+
+  # Install helm
+  - echo "$(date): Installing Helm" >> /var/log/cloud-init-custom.log
+  - curl https://baltocdn.com/helm/signing.asc | gpg --dearmor | tee /usr/share/keyrings/helm.gpg > /dev/null
+  - echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/helm.gpg] https://baltocdn.com/helm/stable/debian/ all main" | tee /etc/apt/sources.list.d/helm-stable-debian.list
+  - apt-get update
+  - apt-get install -y helm
+  - echo "$(date): Helm installation completed" >> /var/log/cloud-init-custom.log
+
+  # Install jq for JSON processing
+  - echo "$(date): Installing jq" >> /var/log/cloud-init-custom.log
+  - apt-get install -y jq
+  - echo "$(date): jq installation completed" >> /var/log/cloud-init-custom.log
+
+  # Install GitHub Actions Runner
+  - echo "$(date): Setting up GitHub Actions Runner" >> /var/log/cloud-init-custom.log
+  - mkdir -p /home/${admin_username}/actions-runner
+  - cd /home/${admin_username}/actions-runner
+  - curl -o actions-runner-linux-x64-2.325.0.tar.gz -L https://github.com/actions/runner/releases/download/v2.325.0/actions-runner-linux-x64-2.325.0.tar.gz
+  - tar xzf ./actions-runner-linux-x64-2.325.0.tar.gz
+  - chown -R ${admin_username}:${admin_username} /home/${admin_username}/actions-runner
+  - echo "$(date): GitHub Actions Runner downloaded and extracted" >> /var/log/cloud-init-custom.log
+
+  # Install .NET runtime for the runner
+  - echo "$(date): Installing .NET runtime" >> /var/log/cloud-init-custom.log
+  - wget https://packages.microsoft.com/config/ubuntu/20.04/packages-microsoft-prod.deb -O packages-microsoft-prod.deb
+  - dpkg -i packages-microsoft-prod.deb
+  - apt-get update
+  - apt-get install -y dotnet-runtime-6.0
+  - echo "$(date): .NET runtime installation completed" >> /var/log/cloud-init-custom.log
+
+  # Create runner configuration script
+  - |
+    cat > /home/${admin_username}/configure-runner.sh << 'EOF'
+    #!/bin/bash
+    set -e
+
+    echo "=== GitHub Actions Runner Configuration ==="
+    echo "This script will configure the GitHub Actions runner."
+    echo "You need to provide the repository URL and registration token."
+    echo ""
+
+    # Check if already configured
+    if [ -f "/home/${admin_username}/actions-runner/.runner" ]; then
+        echo "Runner is already configured."
+        echo "To reconfigure, run: ./config.sh remove && ./config.sh"
+        exit 0
+    fi
+
+    # Get repository URL and token from user
+    if [ -z "$GITHUB_REPO_URL" ] || [ -z "$GITHUB_TOKEN" ]; then
+        echo "Please provide the following environment variables:"
+        echo "  GITHUB_REPO_URL: The repository URL (e.g., https://github.com/owner/repo)"
+        echo "  GITHUB_TOKEN: The registration token from GitHub"
+        echo ""
+        echo "Example usage:"
+        echo "  GITHUB_REPO_URL=https://github.com/owner/repo GITHUB_TOKEN=your_token ./configure-runner.sh"
+        exit 1
+    fi
+
+    cd /home/${admin_username}/actions-runner
+
+    # Configure the runner
+    ./config.sh --url "$GITHUB_REPO_URL" --token "$GITHUB_TOKEN" --name "aks-jumpbox-runner" --work "_work" --labels "self-hosted,Linux,X64,aks-jumpbox" --runasservice
+
+    echo "Runner configured successfully!"
+    echo "To start the runner service: sudo systemctl start actions.runner.$(whoami).aks-jumpbox-runner"
+    echo "To enable auto-start: sudo systemctl enable actions.runner.$(whoami).aks-jumpbox-runner"
+    EOF
+
+  - chmod +x /home/${admin_username}/configure-runner.sh
+  - chown ${admin_username}:${admin_username} /home/${admin_username}/configure-runner.sh
+
+  # Create runner management scripts
+  - |
+    cat > /home/${admin_username}/runner-status.sh << 'EOF'
+    #!/bin/bash
+    echo "=== GitHub Actions Runner Status ==="
+
+    # Check if runner is configured
+    if [ -f "/home/${admin_username}/actions-runner/.runner" ]; then
+        echo "✅ Runner is configured"
+        cat /home/${admin_username}/actions-runner/.runner | jq -r '"Repository: " + .gitHubUrl + "\nRunner Name: " + .agentName + "\nRunner ID: " + (.agentId | tostring)'
+    else
+        echo "❌ Runner is not configured"
+        echo "Run ./configure-runner.sh to configure the runner"
+    fi
+
+    # Check service status
+    SERVICE_NAME="actions.runner.$(whoami).aks-jumpbox-runner"
+    if systemctl is-active --quiet "$SERVICE_NAME"; then
+        echo "✅ Runner service is running"
+    else
+        echo "❌ Runner service is not running"
+        echo "Start with: sudo systemctl start $SERVICE_NAME"
+    fi
+
+    # Show recent logs
+    echo ""
+    echo "Recent logs:"
+    journalctl -u "$SERVICE_NAME" --no-pager -n 10 || echo "No logs available"
+    EOF
+
+  - chmod +x /home/${admin_username}/runner-status.sh
+  - chown ${admin_username}:${admin_username} /home/${admin_username}/runner-status.sh
+
+  # Create runner start/stop scripts
+  - |
+    cat > /home/${admin_username}/runner-start.sh << 'EOF'
+    #!/bin/bash
+    SERVICE_NAME="actions.runner.$(whoami).aks-jumpbox-runner"
+    echo "Starting GitHub Actions Runner service..."
+    sudo systemctl start "$SERVICE_NAME"
+    sudo systemctl enable "$SERVICE_NAME"
+    echo "Runner service started and enabled for auto-start"
+    EOF
+
+  - |
+    cat > /home/${admin_username}/runner-stop.sh << 'EOF'
+    #!/bin/bash
+    SERVICE_NAME="actions.runner.$(whoami).aks-jumpbox-runner"
+    echo "Stopping GitHub Actions Runner service..."
+    sudo systemctl stop "$SERVICE_NAME"
+    echo "Runner service stopped"
+    EOF
+
+  - chmod +x /home/${admin_username}/runner-start.sh /home/${admin_username}/runner-stop.sh
+  - chown ${admin_username}:${admin_username} /home/${admin_username}/runner-start.sh /home/${admin_username}/runner-stop.sh
+
+  # Create auto-configuration script that uses Azure Key Vault or environment
+  - |
+    cat > /home/${admin_username}/auto-configure-runner.sh << 'EOF'
+    #!/bin/bash
+    set -e
+
+    echo "=== Auto-configuring GitHub Actions Runner ==="
+
+    # Try to get configuration from Azure Key Vault using managed identity
+    echo "Attempting to get runner configuration from Azure Key Vault..."
+
+    # Login with managed identity
+    az login --identity 2>/dev/null || true
+
+    # Try to get the repository URL and token from Key Vault
+    KEYVAULT_NAME=$(az keyvault list --resource-group aks-challenge-rg --query "[?starts_with(name, 'aks-demo-kv-')].name" -o tsv | head -1)
+
+    if [ -z "$KEYVAULT_NAME" ]; then
+        echo "❌ Could not find Key Vault in resource group"
+        echo "Please run configure-runner.sh manually with the repository URL and token"
+        exit 1
+    fi
+
+    echo "Found Key Vault: $KEYVAULT_NAME"
+
+    GITHUB_REPO_URL=$(az keyvault secret show --vault-name "$KEYVAULT_NAME" --name "github-repo-url" --query value -o tsv 2>/dev/null || echo "")
+    GITHUB_TOKEN=$(az keyvault secret show --vault-name "$KEYVAULT_NAME" --name "github-runner-token" --query value -o tsv 2>/dev/null || echo "")
+
+    if [ -n "$GITHUB_REPO_URL" ] && [ -n "$GITHUB_TOKEN" ]; then
+        echo "✅ Found configuration in Key Vault"
+        export GITHUB_REPO_URL="$GITHUB_REPO_URL"
+        export GITHUB_TOKEN="$GITHUB_TOKEN"
+        ./configure-runner.sh
+        ./runner-start.sh
+        echo "✅ Runner configured and started successfully!"
+    else
+        echo "❌ Configuration not found in Key Vault"
+        echo "Please run configure-runner.sh manually with the repository URL and token"
+        echo "Or store the configuration in Azure Key Vault:"
+        echo "  az keyvault secret set --vault-name $KEYVAULT_NAME --name github-repo-url --value 'https://github.com/owner/repo'"
+        echo "  az keyvault secret set --vault-name $KEYVAULT_NAME --name github-runner-token --value 'your_token'"
+    fi
+    EOF
+
+  - chmod +x /home/${admin_username}/auto-configure-runner.sh
+  - chown ${admin_username}:${admin_username} /home/${admin_username}/auto-configure-runner.sh
+
+  # Create additional tools for the runner environment
+  - echo "$(date): Installing additional tools for CI/CD" >> /var/log/cloud-init-custom.log
+  - apt-get install -y build-essential python3-pip nodejs npm
+  - npm install -g yarn
+  - echo "$(date): Additional tools installation completed" >> /var/log/cloud-init-custom.log
+
+  # Create a welcome script
+  - echo "$(date): Creating welcome script" >> /var/log/cloud-init-custom.log
+  - |
+    cat > /home/${admin_username}/welcome.sh << 'EOF'
+    #!/bin/bash
+    echo "=========================================="
+    echo "Welcome to AKS Jumpbox with GitHub Actions Runner!"
+    echo "=========================================="
+    echo ""
+    echo "Available tools:"
+    echo "- Docker: $(docker --version)"
+    echo "- Azure CLI: $(az --version | head -1)"
+    echo "- kubectl: $(kubectl version --client --short)"
+    echo "- Helm: $(helm version --short)"
+    echo "- Node.js: $(node --version)"
+    echo "- Python: $(python3 --version)"
+    echo ""
+    echo "GitHub Actions Runner:"
+    echo "- Configuration: ./configure-runner.sh"
+    echo "- Auto-config: ./auto-configure-runner.sh"
+    echo "- Status: ./runner-status.sh"
+    echo "- Start: ./runner-start.sh"
+    echo "- Stop: ./runner-stop.sh"
+    echo ""
+    echo "To get started with AKS:"
+    echo "1. Login to Azure: az login"
+    echo "2. Get AKS credentials: az aks get-credentials --resource-group <rg> --name <aks-name>"
+    echo "3. Test kubectl: kubectl get nodes"
+    echo "4. Login to ACR: az acr login --name <acr-name>"
+    echo ""
+    echo "To configure GitHub Actions Runner:"
+    echo "1. Get a runner token from GitHub repo settings"
+    echo "2. Run: GITHUB_REPO_URL=https://github.com/owner/repo GITHUB_TOKEN=your_token ./configure-runner.sh"
+    echo "3. Or store in Key Vault and run: ./auto-configure-runner.sh"
+    echo ""
+    echo "=========================================="
+    EOF
+
+  - chmod +x /home/${admin_username}/welcome.sh
+  - chown ${admin_username}:${admin_username} /home/${admin_username}/welcome.sh
+  - echo "/home/${admin_username}/welcome.sh" >> /home/${admin_username}/.bashrc
+
+  # Create a status check script
+  - |
+    cat > /home/${admin_username}/check-status.sh << 'EOF'
+    #!/bin/bash
+    echo "=== Jumpbox Status Check ==="
+    echo "Date: $(date)"
+    echo "Docker Status: $(systemctl is-active docker)"
+    echo "Available Tools:"
+    echo "- Docker: $(docker --version 2>/dev/null || echo 'Not available')"
+    echo "- Azure CLI: $(az --version 2>/dev/null | head -1 || echo 'Not available')"
+    echo "- kubectl: $(kubectl version --client --short 2>/dev/null || echo 'Not available')"
+    echo "- Helm: $(helm version --short 2>/dev/null || echo 'Not available')"
+    echo "- jq: $(jq --version 2>/dev/null || echo 'Not available')"
+    echo "- Node.js: $(node --version 2>/dev/null || echo 'Not available')"
+    echo "- Python: $(python3 --version 2>/dev/null || echo 'Not available')"
+    echo ""
+    echo "GitHub Actions Runner:"
+    if [ -f "/home/${admin_username}/actions-runner/.runner" ]; then
+        echo "- Status: Configured"
+        SERVICE_NAME="actions.runner.$(whoami).aks-jumpbox-runner"
+        if systemctl is-active --quiet "$SERVICE_NAME"; then
+            echo "- Service: Running"
+        else
+            echo "- Service: Stopped"
+        fi
+    else
+        echo "- Status: Not configured"
+    fi
+    echo ""
+    echo "Cloud-init logs:"
+    echo "- Output: /var/log/cloud-init-output.log"
+    echo "- Custom: /var/log/cloud-init-custom.log"
+    echo "- Status: $(cloud-init status 2>/dev/null || echo 'Not available')"
+    echo "============================"
+    EOF
+
+  - chmod +x /home/${admin_username}/check-status.sh
+  - chown ${admin_username}:${admin_username} /home/${admin_username}/check-status.sh
+
+  # Log completion
+  - echo "$(date): Cloud-init runcmd completed successfully" >> /var/log/cloud-init-custom.log
+  - echo "$(date): All tools installed and configured" >> /var/log/cloud-init-custom.log
+
+# Create a final status marker
+write_files:
+  - path: /tmp/cloud-init-success
+    content: |
+      Cloud-init completed successfully at $(date)
+      All tools have been installed and configured.
+    owner: root:root
+    permissions: '0644'

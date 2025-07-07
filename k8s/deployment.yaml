@@ -1,0 +1,37 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: nginx-demo
+  labels:
+    app: nginx-demo
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: nginx-demo
+  template:
+    metadata:
+      labels:
+        app: nginx-demo
+    spec:
+      containers:
+      - name: nginx
+        image: <ACR_NAME>.azurecr.io/nginx-demo:latest
+        ports:
+        - containerPort: 80
+        resources:
+          requests:
+            cpu: "100m"
+            memory: "128Mi"
+          limits:
+            cpu: "250m"
+            memory: "256Mi"
+        volumeMounts:
+        - name: static-assets
+          mountPath: /usr/share/nginx/html/static
+      volumes:
+      - name: static-assets
+        azureFile:
+          secretName: azure-files-secret
+          shareName: staticweb
+          readOnly: true
