@@ -6,7 +6,7 @@ on:
       resource_group_name:
         description: 'Resource group name for Terraform state'
         required: true
-        default: 'terraform-state-rg'
+        default: 'aks-state-rg'
       location:
         description: 'Azure region for Terraform state'
         required: true

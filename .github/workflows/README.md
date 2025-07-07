@@ -90,9 +90,9 @@ az ad sp create-for-rbac --name "github-actions-terraform" \
 2. Navigate to Actions → Setup Terraform Backend
 3. Click "Run workflow"
 4. Fill in the required parameters:
-   - Resource group name: `terraform-state-rg`
+   - Resource group name: `aks-state-rg`
    - Location: `eastus`
-   - Storage account name: `tfstateyouruniquename`
+   - Storage account name: `akstfstate`
    - Container name: `tfstate`
 5. Run the workflow
 6. Copy the output values to GitHub secrets
