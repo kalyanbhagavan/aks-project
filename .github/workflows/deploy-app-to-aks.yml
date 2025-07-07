@@ -147,7 +147,7 @@ jobs:
         run: |
           sshpass -p "${{ secrets.JUMPBOX_PASSWORD }}" scp -o StrictHostKeyChecking=no -r ./k8s azureuser@${{ steps.terraform-outputs.outputs.jumpbox_ip }}:~/
 
-            - name: Copy deployment script to jumpbox
+      - name: Copy deployment script to jumpbox
         run: |
           sshpass -p "${{ secrets.JUMPBOX_PASSWORD }}" scp -o StrictHostKeyChecking=no ./scripts/deploy-to-private-aks.sh azureuser@${{ steps.terraform-outputs.outputs.jumpbox_ip }}:~/
 
@@ -215,7 +215,7 @@ SSH_EOF
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "**Application URL:** ${{ steps.app-url.outputs.app_url }}" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
-          echo "**Infrastructure Details:**" >> $GITHUB_STEP_SUMMARY
+          echo "**Infrastructure Details:" >> $GITHUB_STEP_SUMMARY
           echo "- AKS Cluster: ${{ steps.terraform-outputs.outputs.aks_name }}" >> $GITHUB_STEP_SUMMARY
           echo "- ACR: ${{ steps.terraform-outputs.outputs.acr_name }}" >> $GITHUB_STEP_SUMMARY
           echo "- Resource Group: ${{ steps.terraform-outputs.outputs.resource_group }}" >> $GITHUB_STEP_SUMMARY
