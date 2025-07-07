@@ -44,15 +44,37 @@ DOCKER_TAG="latest"
 check_prerequisites() {
     print_header "Checking prerequisites..."
 
+    # Check and install jq
+    if ! command -v jq &> /dev/null; then
+        print_status "Installing jq..."
+        sudo apt-get update && sudo apt-get install -y jq
+    fi
+
+    # Check and install Azure CLI
+    if ! command -v az &> /dev/null; then
+        print_status "Installing Azure CLI..."
+        curl -sL https://aka.ms/InstallAzureCLIDeb | sudo bash
+    fi
+
+    # Check and install kubelogin
+    if ! command -v kubelogin &> /dev/null; then
+        print_status "Installing kubelogin..."
+        # Install unzip if not present
+        if ! command -v unzip &> /dev/null; then
+            print_status "Installing unzip..."
+            sudo apt-get update && sudo apt-get install -y unzip
+        fi
+        # Download and install kubelogin
+        KUBELOGIN_VERSION=$(curl -s https://api.github.com/repos/Azure/kubelogin/releases/latest | jq -r '.tag_name')
+        curl -LO "https://github.com/Azure/kubelogin/releases/download/${KUBELOGIN_VERSION}/kubelogin-linux-amd64.zip"
+        unzip kubelogin-linux-amd64.zip
+        sudo mv bin/linux_amd64/kubelogin /usr/local/bin/
+        rm -rf bin kubelogin-linux-amd64.zip
+    fi
+
     # Check Docker
     if ! command -v docker &> /dev/null; then
         print_error "Docker is not installed. Please install Docker first."
-        exit 1
-    fi
-
-    # Check Azure CLI
-    if ! command -v az &> /dev/null; then
-        print_error "Azure CLI is not installed. Please install Azure CLI first."
         exit 1
     fi
 
@@ -253,12 +275,49 @@ SSH_EOF
     print_status "Deployment completed!"
 }
 
+# Azure login function
+azure_login() {
+    print_header "Setting up Azure authentication..."
+
+    # Check if we have the required environment variables
+    if [ -z "$ARM_CLIENT_ID" ] || [ -z "$ARM_CLIENT_SECRET" ] || [ -z "$ARM_SUBSCRIPTION_ID" ] || [ -z "$ARM_TENANT_ID" ]; then
+        print_error "Missing required Azure credentials environment variables."
+        print_error "Please set ARM_CLIENT_ID, ARM_CLIENT_SECRET, ARM_SUBSCRIPTION_ID, and ARM_TENANT_ID"
+        print_error "You can also run: az login (if using Azure CLI authentication)"
+        exit 1
+    fi
+
+    # Login using service principal
+    print_status "Logging in to Azure using service principal..."
+    az login --service-principal \
+        --username "$ARM_CLIENT_ID" \
+        --password "$ARM_CLIENT_SECRET" \
+        --tenant "$ARM_TENANT_ID"
+
+    print_status "Successfully logged in to Azure using service principal"
+
+    # Set the subscription
+    az account set --subscription "$ARM_SUBSCRIPTION_ID"
+    print_status "Set subscription to: $ARM_SUBSCRIPTION_ID"
+
+    # Verify login was successful
+    if ! az account show &> /dev/null; then
+        print_error "Failed to login to Azure CLI. Please check your credentials."
+        exit 1
+    fi
+
+    print_status "Azure login verified successfully!"
+}
+
 # Main execution
 main() {
     print_header "Starting deployment to private AKS cluster..."
 
     # Check prerequisites
     check_prerequisites
+
+    # Azure login
+    azure_login
 
     # Build and push Docker image
     build_and_push_image
@@ -270,14 +329,6 @@ main() {
     print_status "Your application should now be accessible via the LoadBalancer external IP"
     print_status "Check the jumpbox output above for the external IP address"
 }
-
-# Check if Azure credentials are available
-if [ -z "$ARM_CLIENT_ID" ] || [ -z "$ARM_CLIENT_SECRET" ] || [ -z "$ARM_SUBSCRIPTION_ID" ] || [ -z "$ARM_TENANT_ID" ]; then
-    print_error "Azure credentials not found. Please set the following environment variables:"
-    print_error "ARM_CLIENT_ID, ARM_CLIENT_SECRET, ARM_SUBSCRIPTION_ID, ARM_TENANT_ID"
-    print_error "You can also run: az login (if using Azure CLI authentication)"
-    exit 1
-fi
 
 # Run main function
 main "$@"
