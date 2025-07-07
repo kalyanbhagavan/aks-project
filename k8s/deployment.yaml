@@ -16,7 +16,7 @@ spec:
     spec:
       containers:
       - name: nginx
-        image: <ACR_NAME>.azurecr.io/nginx-demo:latest
+        image: aksdemoacr2025.azurecr.io/nginx-demo:latest
         ports:
         - containerPort: 80
         resources:
