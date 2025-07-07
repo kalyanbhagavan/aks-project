@@ -42,15 +42,10 @@ jobs:
     env:
       TF_VERSION: "1.7.0"
       AZURE_CREDENTIALS: ${{ secrets.AZURE_CREDENTIALS }}
-      ARM_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
-      ARM_CLIENT_SECRET: ${{ secrets.AZURE_CLIENT_SECRET }}
-      ARM_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
-      ARM_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
       TF_STATE_RESOURCE_GROUP: ${{ secrets.TF_STATE_RESOURCE_GROUP }}
       TF_STATE_LOCATION: ${{ secrets.TF_STATE_LOCATION }}
       TF_STATE_STORAGE_ACCOUNT: ${{ secrets.TF_STATE_STORAGE_ACCOUNT }}
       TF_STATE_CONTAINER: ${{ secrets.TF_STATE_CONTAINER }}
-      TF_STATE_KEY: ${{ secrets.TF_STATE_KEY }}
 
     steps:
       - name: Checkout
@@ -67,13 +62,11 @@ jobs:
           creds: ${{ secrets.AZURE_CREDENTIALS }}
 
       - name: Ensure backend resource group exists
-        id: ensure_rg
         run: |
           az group show --name "$TF_STATE_RESOURCE_GROUP" || \
           az group create --name "$TF_STATE_RESOURCE_GROUP" --location "$TF_STATE_LOCATION"
 
       - name: Ensure backend storage account exists
-        id: ensure_sa
         run: |
           az storage account show --name "$TF_STATE_STORAGE_ACCOUNT" --resource-group "$TF_STATE_RESOURCE_GROUP" || \
           az storage account create --name "$TF_STATE_STORAGE_ACCOUNT" --resource-group "$TF_STATE_RESOURCE_GROUP" --location "$TF_STATE_LOCATION" --sku Standard_LRS
@@ -84,9 +77,9 @@ jobs:
           KEY=$(az storage account keys list --resource-group "$TF_STATE_RESOURCE_GROUP" --account-name "$TF_STATE_STORAGE_ACCOUNT" --query '[0].value' -o tsv)
           echo "::add-mask::$KEY"
           echo "TF_STATE_KEY=$KEY" >> $GITHUB_ENV
+          echo "ARM_ACCESS_KEY=$KEY" >> $GITHUB_ENV
 
       - name: Ensure backend container exists
-        id: ensure_container
         run: |
           az storage container show --name "$TF_STATE_CONTAINER" --account-name "$TF_STATE_STORAGE_ACCOUNT" || \
           az storage container create --name "$TF_STATE_CONTAINER" --account-name "$TF_STATE_STORAGE_ACCOUNT" --account-key "$TF_STATE_KEY"
@@ -143,7 +136,7 @@ jobs:
           github-token: ${{ secrets.GITHUB_TOKEN }}
           script: |
             const output = `#### Terraform Plan 📝
-            \`\`\`\n
+            \`\`\`
             ${process.env.PLAN || 'No changes. Infrastructure is up-to-date.'}
             \`\`\`
             *Pusher: @${{ github.actor }}, Action: \`${{ github.event_name }}\`*`;
