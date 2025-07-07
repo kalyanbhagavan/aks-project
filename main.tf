@@ -95,8 +95,24 @@ resource "azurerm_role_assignment" "jumpbox_acr_push" {
   principal_id         = module.jumpbox.managed_identity_principal_id
 }
 
+data "azurerm_client_config" "current" {}
+
+resource "azurerm_key_vault_access_policy" "terraform" {
+  key_vault_id = module.keyvault.key_vault_id
+  tenant_id    = data.azurerm_client_config.current.tenant_id
+  object_id    = data.azurerm_client_config.current.object_id
+
+  secret_permissions = [
+    "Get",
+    "Set",
+    "List",
+    "Delete"
+  ]
+}
+
 resource "azurerm_key_vault_secret" "storage_account_key" {
   name         = "storage-account-key"
   value        = module.storage.storage_account_primary_access_key
   key_vault_id = module.keyvault.key_vault_id
+  depends_on = [azurerm_key_vault_access_policy.terraform]
 }

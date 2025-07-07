@@ -128,13 +128,6 @@ jobs:
         run: |
           scp -r ./k8s azureuser@${{ steps.final-vars.outputs.final_jumpbox_ip }}:~/
 
-      - name: Get Storage Account Key from Key Vault
-        id: get_storage_key
-        run: |
-          STORAGE_KEY=$(az keyvault secret show --vault-name "${{ secrets.AZURE_KEYVAULT_NAME }}" --name "storage-account-key" --query value -o tsv)
-          echo "::add-mask::$STORAGE_KEY"
-          echo "STORAGE_ACCOUNT_KEY=$STORAGE_KEY" >> $GITHUB_ENV
-
       - name: Deploy Manifests via SSH
         run: |
           ssh azureuser@${{ steps.final-vars.outputs.final_jumpbox_ip }} << 'EOF'
@@ -157,7 +150,7 @@ jobs:
             # Create Azure Files secret
             kubectl create secret generic azure-files-secret \
               --from-literal=azurestorageaccountname="${{ steps.final-vars.outputs.final_storage_account }}" \
-              --from-literal=azurestorageaccountkey="$STORAGE_ACCOUNT_KEY" \
+              --from-literal=azurestorageaccountkey="${{ secrets.STORAGE_ACCOUNT_KEY }}" \
               --dry-run=client -o yaml | kubectl apply -f -
 
             # Deploy manifests
