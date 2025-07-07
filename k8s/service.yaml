@@ -2,11 +2,13 @@ apiVersion: v1
 kind: Service
 metadata:
   name: nginx-demo-lb
+  labels:
+    app: nginx-demo
 spec:
   type: LoadBalancer
+  ports:
+  - port: 80
+    targetPort: 80
+    protocol: TCP
   selector:
     app: nginx-demo
-  ports:
-    - protocol: TCP
-      port: 80
-      targetPort: 80
