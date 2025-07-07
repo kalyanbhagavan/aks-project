@@ -208,10 +208,13 @@ deploy_to_aks() {
         print_status "Creating Azure Files secret..."
         STORAGE_KEY=$(az storage account keys list --resource-group $RESOURCE_GROUP --account-name $STORAGE_ACCOUNT --query '[0].value' -o tsv)
 
+        # Delete existing secret if it exists
+        kubectl delete secret azure-files-secret --ignore-not-found=true
+
+        # Create the secret properly
         kubectl create secret generic azure-files-secret \
-            --from-literal=azurestorageaccountname=$STORAGE_ACCOUNT \
-            --from-literal=azurestorageaccountkey=$STORAGE_KEY \
-            --dry-run=client -o yaml | kubectl apply -f -
+            --from-literal=azurestorageaccountname="$STORAGE_ACCOUNT" \
+            --from-literal=azurestorageaccountkey="$STORAGE_KEY"
 
         # Update deployment.yaml with correct ACR name if needed
         print_status "Updating deployment with correct ACR name..."
