@@ -1,0 +1,224 @@
+name: Deploy App to Private AKS
+
+on:
+  push:
+    branches: [ main, develop ]
+    paths:
+      - 'k8s/**'
+      - 'Dockerfile'
+      - 'index.html'
+      - '.github/workflows/deploy-app-to-aks.yml'
+  pull_request:
+    branches: [ main ]
+    paths:
+      - 'k8s/**'
+      - 'Dockerfile'
+      - 'index.html'
+      - '.github/workflows/deploy-app-to-aks.yml'
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: 'Environment to deploy to'
+        required: true
+        default: 'production'
+        type: choice
+        options:
+          - development
+          - staging
+          - production
+      skip_docker_build:
+        description: 'Skip Docker build and push (use existing image)'
+        required: false
+        type: boolean
+        default: false
+
+jobs:
+  deploy:
+    name: 'Deploy to Private AKS via Jumpbox'
+    runs-on: ubuntu-latest
+    environment: ${{ github.event.inputs.environment || 'production' }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Azure CLI
+        uses: azure/login@v2
+        with:
+          creds: ${{ secrets.AZURE_CREDENTIALS }}
+
+      - name: Export Azure Service Principal credentials
+        run: |
+          echo "ARM_CLIENT_ID=$(echo '${{ secrets.AZURE_CREDENTIALS }}' | jq -r .clientId)" >> $GITHUB_ENV
+          echo "ARM_CLIENT_SECRET=$(echo '${{ secrets.AZURE_CREDENTIALS }}' | jq -r .clientSecret)" >> $GITHUB_ENV
+          echo "ARM_SUBSCRIPTION_ID=$(echo '${{ secrets.AZURE_CREDENTIALS }}' | jq -r .subscriptionId)" >> $GITHUB_ENV
+          echo "ARM_TENANT_ID=$(echo '${{ secrets.AZURE_CREDENTIALS }}' | jq -r .tenantId)" >> $GITHUB_ENV
+        shell: bash
+
+      - name: Get Terraform Outputs
+        id: terraform-outputs
+        run: |
+          # Set up backend and get outputs
+          cat > backend.tf <<EOF
+          terraform {
+            backend "azurerm" {
+              resource_group_name  = "${{ secrets.TF_STATE_RESOURCE_GROUP }}"
+              storage_account_name = "${{ secrets.TF_STATE_STORAGE_ACCOUNT }}"
+              container_name       = "${{ secrets.TF_STATE_CONTAINER }}"
+              key                  = "terraform.tfstate"
+              access_key           = "${{ secrets.TF_STATE_KEY }}"
+            }
+          }
+          EOF
+
+          # Initialize and get outputs
+          terraform init
+          terraform output -json > outputs.json
+
+          # Extract values
+          JUMPBOX_IP=$(terraform output -raw jumpbox_public_ip)
+          ACR_NAME=$(terraform output -raw acr_name)
+          RESOURCE_GROUP=$(terraform output -raw resource_group_name)
+          AKS_NAME=$(terraform output -raw aks_name)
+          STORAGE_ACCOUNT=$(terraform output -raw storage_account_name)
+
+          echo "jumpbox_ip=$JUMPBOX_IP" >> $GITHUB_OUTPUT
+          echo "acr_name=$ACR_NAME" >> $GITHUB_OUTPUT
+          echo "resource_group=$RESOURCE_GROUP" >> $GITHUB_OUTPUT
+          echo "aks_name=$AKS_NAME" >> $GITHUB_OUTPUT
+          echo "storage_account=$STORAGE_ACCOUNT" >> $GITHUB_OUTPUT
+
+          echo "::add-mask::$JUMPBOX_IP"
+          echo "::add-mask::$ACR_NAME"
+          echo "::add-mask::$STORAGE_ACCOUNT"
+
+      - name: Install sshpass
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y sshpass
+
+      - name: Build and Push Docker Image
+        if: ${{ !github.event.inputs.skip_docker_build }}
+        run: |
+          # Check if Dockerfile exists
+          if [ ! -f "Dockerfile" ]; then
+            echo "Creating simple NGINX Dockerfile..."
+            cat > Dockerfile << 'EOF'
+          FROM nginx:alpine
+          COPY index.html /usr/share/nginx/html/
+          EXPOSE 80
+          CMD ["nginx", "-g", "daemon off;"]
+          EOF
+
+            # Create a simple index.html
+            cat > index.html << 'EOF'
+          <!DOCTYPE html>
+          <html>
+          <head>
+              <title>AKS Demo App</title>
+              <style>
+                  body { font-family: Arial, sans-serif; text-align: center; margin-top: 50px; }
+                  .container { max-width: 600px; margin: 0 auto; }
+                  .success { color: green; }
+              </style>
+          </head>
+          <body>
+              <div class="container">
+                  <h1>🚀 AKS Private Cluster Demo</h1>
+                  <p class="success">✅ Successfully deployed to private AKS cluster!</p>
+                  <p>This application is running on a private Azure Kubernetes Service cluster.</p>
+                  <p>Deployed via GitHub Actions and jumpbox with secure access patterns.</p>
+                  <p><strong>Commit:</strong> ${{ github.sha }}</p>
+                  <p><strong>Branch:</strong> ${{ github.ref_name }}</p>
+              </div>
+          </body>
+          </html>
+          EOF
+          fi
+
+          # Login to ACR
+          az acr login --name ${{ steps.terraform-outputs.outputs.acr_name }}
+
+          # Build and push image
+          docker build -t ${{ steps.terraform-outputs.outputs.acr_name }}.azurecr.io/nginx-demo:latest .
+          docker push ${{ steps.terraform-outputs.outputs.acr_name }}.azurecr.io/nginx-demo:latest
+
+      - name: Copy k8s manifests to jumpbox
+        run: |
+          sshpass -p "${{ secrets.JUMPBOX_PASSWORD }}" scp -o StrictHostKeyChecking=no -r ./k8s azureuser@${{ steps.terraform-outputs.outputs.jumpbox_ip }}:~/
+
+            - name: Copy deployment script to jumpbox
+        run: |
+          sshpass -p "${{ secrets.JUMPBOX_PASSWORD }}" scp -o StrictHostKeyChecking=no ./scripts/deploy-to-private-aks.sh azureuser@${{ steps.terraform-outputs.outputs.jumpbox_ip }}:~/
+
+      - name: Deploy to AKS via jumpbox using script
+        run: |
+          sshpass -p "${{ secrets.JUMPBOX_PASSWORD }}" ssh -o StrictHostKeyChecking=no azureuser@${{ steps.terraform-outputs.outputs.jumpbox_ip }} << 'SSH_EOF'
+            # Set environment variables for the script
+            export ARM_CLIENT_ID="$ARM_CLIENT_ID"
+            export ARM_CLIENT_SECRET="$ARM_CLIENT_SECRET"
+            export ARM_SUBSCRIPTION_ID="$ARM_SUBSCRIPTION_ID"
+            export ARM_TENANT_ID="$ARM_TENANT_ID"
+
+            # Set configuration variables
+            export ACR_NAME="${{ steps.terraform-outputs.outputs.acr_name }}"
+            export RESOURCE_GROUP="${{ steps.terraform-outputs.outputs.resource_group }}"
+            export AKS_NAME="${{ steps.terraform-outputs.outputs.aks_name }}"
+            export STORAGE_ACCOUNT="${{ steps.terraform-outputs.outputs.storage_account }}"
+
+            # Make script executable and run it
+            chmod +x ~/deploy-to-private-aks.sh
+            ~/deploy-to-private-aks.sh
+SSH_EOF
+
+      - name: Get Application URL
+        id: app-url
+        run: |
+          EXTERNAL_IP=$(sshpass -p "${{ secrets.JUMPBOX_PASSWORD }}" ssh -o StrictHostKeyChecking=no azureuser@${{ steps.terraform-outputs.outputs.jumpbox_ip }} \
+            "kubectl get svc nginx-demo-lb -o jsonpath='{.status.loadBalancer.ingress[0].ip}'")
+          echo "app_url=http://$EXTERNAL_IP" >> $GITHUB_OUTPUT
+          echo "Application URL: http://$EXTERNAL_IP"
+
+      - name: Comment on PR
+        uses: actions/github-script@v7
+        if: github.event_name == 'pull_request'
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          script: |
+            const output = `#### 🚀 App Deployed to Private AKS Successfully!
+
+            **Application URL:** ${{ steps.app-url.outputs.app_url }}
+
+            **Deployed Resources:**
+            - ✅ NGINX Deployment (2 replicas)
+            - ✅ LoadBalancer Service
+            - ✅ RBAC for dev team
+            - ✅ Azure Files integration
+
+            **Infrastructure:**
+            - 🔒 Private AKS Cluster
+            - 🔒 Private ACR
+            - 🔒 Deployed via jumpbox
+
+            *Deployed via GitHub Actions to private AKS cluster*`;
+
+            github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body: output
+            })
+
+      - name: Deployment Summary
+        run: |
+          echo "## 🎉 Deployment Summary" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**Application URL:** ${{ steps.app-url.outputs.app_url }}" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**Infrastructure Details:**" >> $GITHUB_STEP_SUMMARY
+          echo "- AKS Cluster: ${{ steps.terraform-outputs.outputs.aks_name }}" >> $GITHUB_STEP_SUMMARY
+          echo "- ACR: ${{ steps.terraform-outputs.outputs.acr_name }}" >> $GITHUB_STEP_SUMMARY
+          echo "- Resource Group: ${{ steps.terraform-outputs.outputs.resource_group }}" >> $GITHUB_STEP_SUMMARY
+          echo "- Jumpbox IP: ${{ steps.terraform-outputs.outputs.jumpbox_ip }}" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**Deployment Method:** Private AKS via jumpbox" >> $GITHUB_STEP_SUMMARY
