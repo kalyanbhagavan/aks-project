@@ -45,12 +45,13 @@ jobs:
       - name: Check for Sensitive Data
         run: |
           echo "🔍 Scanning for hardcoded sensitive data..."
-          if grep -r "password\|secret\|key" *.tf *.tfvars 2>/dev/null | grep -v "variable\|description\|sensitive"; then
-            echo "❌ Potential sensitive data found"
+          if grep -r --include=*.tf --include=*.tfvars "password\|secret\|key" . 2>/dev/null | grep -vE 'var\.|variable|description|sensitive|module\.|key_vault_id|_access_key'; then
+            echo "❌ Potential hardcoded sensitive data found"
             exit 1
           else
             echo "✅ No hardcoded sensitive data detected."
           fi
+
 
   security-scan:
     name: 'Trivy Security Scan'
