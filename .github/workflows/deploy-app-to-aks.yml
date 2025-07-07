@@ -2,14 +2,14 @@ name: Deploy App to Private AKS
 
 on:
   push:
-    branches: [ main, develop ]
+    branches: [main, develop]
     paths:
       - 'k8s/**'
       - 'Dockerfile'
       - 'index.html'
       - '.github/workflows/deploy-app-to-aks.yml'
   pull_request:
-    branches: [ main ]
+    branches: [main]
     paths:
       - 'k8s/**'
       - 'Dockerfile'
@@ -22,10 +22,7 @@ on:
         required: true
         default: 'production'
         type: choice
-        options:
-          - development
-          - staging
-          - production
+        options: [development, staging, production]
       skip_docker_build:
         description: 'Skip Docker build and push (use existing image)'
         required: false
@@ -34,12 +31,12 @@ on:
 
 jobs:
   deploy:
-    name: 'Deploy to Private AKS via Jumpbox'
+    name: Deploy to Private AKS via Jumpbox
     runs-on: ubuntu-latest
     environment: ${{ github.event.inputs.environment || 'production' }}
 
     steps:
-      - name: Checkout
+      - name: Checkout Code
         uses: actions/checkout@v4
 
       - name: Setup Azure CLI
@@ -47,321 +44,143 @@ jobs:
         with:
           creds: ${{ secrets.AZURE_CREDENTIALS }}
 
-      - name: Export Azure Service Principal credentials
-        run: |
-          echo "ARM_CLIENT_ID=$(echo '${{ secrets.AZURE_CREDENTIALS }}' | jq -r .clientId)" >> $GITHUB_ENV
-          echo "ARM_CLIENT_SECRET=$(echo '${{ secrets.AZURE_CREDENTIALS }}' | jq -r .clientSecret)" >> $GITHUB_ENV
-          echo "ARM_SUBSCRIPTION_ID=$(echo '${{ secrets.AZURE_CREDENTIALS }}' | jq -r .subscriptionId)" >> $GITHUB_ENV
-          echo "ARM_TENANT_ID=$(echo '${{ secrets.AZURE_CREDENTIALS }}' | jq -r .tenantId)" >> $GITHUB_ENV
-        shell: bash
-
       - name: Validate Required Secrets
         run: |
-          # Check if all required secrets are present
-          if [[ -z "${{ secrets.JUMPBOX_IP }}" ]]; then
-            echo "Error: JUMPBOX_IP secret is required"
-            exit 1
-          fi
-
-          if [[ -z "${{ secrets.JUMPBOX_PASSWORD }}" ]]; then
-            echo "Error: JUMPBOX_PASSWORD secret is required"
-            exit 1
-          fi
-
-          if [[ -z "${{ secrets.ACR_NAME }}" ]]; then
-            echo "Error: ACR_NAME secret is required"
-            exit 1
-          fi
-
-          if [[ -z "${{ secrets.RESOURCE_GROUP_NAME }}" ]]; then
-            echo "Error: RESOURCE_GROUP_NAME secret is required"
-            exit 1
-          fi
-
-          if [[ -z "${{ secrets.AKS_CLUSTER_NAME }}" ]]; then
-            echo "Error: AKS_CLUSTER_NAME secret is required"
-            exit 1
-          fi
-
-          echo "All required secrets are present"
+          for key in JUMPBOX_IP JUMPBOX_PASSWORD ACR_USERNAME ACR_PASSWORD ACR_NAME RESOURCE_GROUP_NAME AKS_CLUSTER_NAME; do
+            if [[ -z "${{ secrets[$key] }}" ]]; then
+              echo "❌ Secret $key is missing!"
+              exit 1
+            fi
+          done
 
       - name: Install sshpass
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y sshpass
+        run: sudo apt-get update && sudo apt-get install -y sshpass
 
-      - name: Test Jumpbox Connectivity
-        run: |
-          echo "Testing SSH connectivity to jumpbox..."
-          timeout 30 sshpass -p "${{ secrets.JUMPBOX_PASSWORD }}" ssh -o StrictHostKeyChecking=no -o ConnectTimeout=10 azureuser@${{ secrets.JUMPBOX_IP }} "echo 'Connection successful'"
+      - name: Test Jumpbox SSH Access
+        run: sshpass -p "${{ secrets.JUMPBOX_PASSWORD }}" ssh -o StrictHostKeyChecking=no azureuser@${{ secrets.JUMPBOX_IP }} "echo Connected"
 
-      - name: Build and Push Docker Image
+      - name: Build & Push Docker Image
         if: ${{ !github.event.inputs.skip_docker_build }}
         run: |
-          # Check if Dockerfile exists
-          if [ ! -f "Dockerfile" ]; then
-            echo "Creating simple NGINX Dockerfile..."
-            cat > Dockerfile << 'EOF'
-          FROM nginx:alpine
-          COPY index.html /usr/share/nginx/html/
-          EXPOSE 80
-          CMD ["nginx", "-g", "daemon off;"]
-          EOF
+          echo "Building Docker image..."
 
-            # Create a simple index.html with properly escaped variables
-            cat > index.html << 'EOF'
-          <!DOCTYPE html>
-          <html>
-          <head>
-              <title>AKS Demo App</title>
-              <style>
-                  body { font-family: Arial, sans-serif; text-align: center; margin-top: 50px; }
-                  .container { max-width: 600px; margin: 0 auto; }
-                  .success { color: green; }
-              </style>
-          </head>
-          <body>
-              <div class="container">
-                  <h1>🚀 AKS Private Cluster Demo</h1>
-                  <p class="success">✅ Successfully deployed to private AKS cluster!</p>
-                  <p>This application is running on a private Azure Kubernetes Service cluster.</p>
-                  <p>Deployed via GitHub Actions and jumpbox with secure access patterns.</p>
-                  <p><strong>Commit:</strong> COMMIT_SHA</p>
-                  <p><strong>Branch:</strong> BRANCH_NAME</p>
-              </div>
-          </body>
-          </html>
-          EOF
-
-            # Replace placeholders with actual values
-            sed -i "s/COMMIT_SHA/${{ github.sha }}/g" index.html
-            sed -i "s/BRANCH_NAME/${{ github.ref_name }}/g" index.html
+          if [ ! -f Dockerfile ]; then
+            cat > Dockerfile <<'EOF'
+FROM nginx:alpine
+COPY index.html /usr/share/nginx/html/
+EXPOSE 80
+CMD ["nginx", "-g", "daemon off;"]
+EOF
           fi
 
-          # Login to ACR
-          az acr login --name ${{ secrets.ACR_NAME }}
+          if [ ! -f index.html ]; then
+            cat > index.html <<'EOF'
+<!DOCTYPE html>
+<html>
+<head><title>AKS Demo</title></head>
+<body><h1>✅ Deployed via GitHub Actions</h1></body>
+</html>
+EOF
+          fi
 
-          # Build and push image with build timestamp
           IMAGE_TAG="${{ github.sha }}-$(date +%s)"
+          echo "image_tag=$IMAGE_TAG" >> $GITHUB_ENV
+
+          echo "${{ secrets.ACR_PASSWORD }}" | docker login ${{ secrets.ACR_NAME }}.azurecr.io \
+            --username ${{ secrets.ACR_USERNAME }} --password-stdin
+
           docker build -t ${{ secrets.ACR_NAME }}.azurecr.io/nginx-demo:$IMAGE_TAG .
           docker tag ${{ secrets.ACR_NAME }}.azurecr.io/nginx-demo:$IMAGE_TAG ${{ secrets.ACR_NAME }}.azurecr.io/nginx-demo:latest
           docker push ${{ secrets.ACR_NAME }}.azurecr.io/nginx-demo:$IMAGE_TAG
           docker push ${{ secrets.ACR_NAME }}.azurecr.io/nginx-demo:latest
 
-          echo "image_tag=$IMAGE_TAG" >> $GITHUB_OUTPUT
-
-      - name: Prepare deployment files
+      - name: Prepare k8s and script files
         run: |
-          # Create k8s directory if it doesn't exist
-          mkdir -p k8s
+          mkdir -p k8s scripts
 
-          # Create deployment manifest if it doesn't exist
-          if [ ! -f "k8s/deployment.yaml" ]; then
-            cat > k8s/deployment.yaml << 'EOF'
-          apiVersion: apps/v1
-          kind: Deployment
-          metadata:
-            name: nginx-demo
-            labels:
-              app: nginx-demo
-          spec:
-            replicas: 2
-            selector:
-              matchLabels:
-                app: nginx-demo
-            template:
-              metadata:
-                labels:
-                  app: nginx-demo
-              spec:
-                containers:
-                - name: nginx-demo
-                  image: ACR_NAME.azurecr.io/nginx-demo:latest
-                  ports:
-                  - containerPort: 80
-                  resources:
-                    requests:
-                      cpu: 100m
-                      memory: 128Mi
-                    limits:
-                      cpu: 500m
-                      memory: 512Mi
-          ---
-          apiVersion: v1
-          kind: Service
-          metadata:
-            name: nginx-demo-lb
-            labels:
-              app: nginx-demo
-          spec:
-            type: LoadBalancer
-            ports:
-            - port: 80
-              targetPort: 80
-            selector:
-              app: nginx-demo
-          EOF
+          cat > k8s/deployment.yaml <<'EOF'
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: nginx-demo
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: nginx-demo
+  template:
+    metadata:
+      labels:
+        app: nginx-demo
+    spec:
+      containers:
+        - name: nginx-demo
+          image: ACR_PLACEHOLDER.azurecr.io/nginx-demo:latest
+          ports:
+            - containerPort: 80
+EOF
 
-            # Replace ACR name placeholder
-            sed -i "s/ACR_NAME/${{ secrets.ACR_NAME }}/g" k8s/deployment.yaml
-          fi
+          sed -i "s|ACR_PLACEHOLDER|${{ secrets.ACR_NAME }}|g" k8s/deployment.yaml
 
-          # Create deployment script if it doesn't exist
-          mkdir -p scripts
-          cat > scripts/deploy-to-private-aks.sh << 'EOF'
-          #!/bin/bash
-          set -e
+          cat > scripts/deploy-to-private-aks.sh <<'EOF'
+#!/bin/bash
+set -e
 
-          echo "Starting deployment to private AKS cluster..."
+az login --service-principal -u "$ARM_CLIENT_ID" -p "$ARM_CLIENT_SECRET" --tenant "$ARM_TENANT_ID"
+az account set --subscription "$ARM_SUBSCRIPTION_ID"
 
-          # Install Azure CLI if not present
-          if ! command -v az &> /dev/null; then
-              echo "Installing Azure CLI..."
-              curl -sL https://aka.ms/InstallAzureCLIDeb | sudo bash
-          fi
-
-          # Install kubectl if not present
-          if ! command -v kubectl &> /dev/null; then
-              echo "Installing kubectl..."
-              curl -LO "https://dl.k8s.io/release/$(curl -L -s https://dl.k8s.io/release/stable.txt)/bin/linux/amd64/kubectl"
-              sudo install -o root -g root -m 0755 kubectl /usr/local/bin/kubectl
-          fi
-
-          # Login to Azure
-          echo "Logging in to Azure..."
-          az login --service-principal -u "$ARM_CLIENT_ID" -p "$ARM_CLIENT_SECRET" --tenant "$ARM_TENANT_ID"
-          az account set --subscription "$ARM_SUBSCRIPTION_ID"
-
-          # Get AKS credentials
-          echo "Getting AKS credentials..."
-          az aks get-credentials --resource-group "$RESOURCE_GROUP" --name "$AKS_NAME" --overwrite-existing
-
-          # Test kubectl connection
-          echo "Testing kubectl connection..."
-          kubectl get nodes
-
-          # Apply Kubernetes manifests
-          echo "Applying Kubernetes manifests..."
-          kubectl apply -f ~/k8s/
-
-          # Wait for deployment to be ready
-          echo "Waiting for deployment to be ready..."
-          kubectl wait --for=condition=available --timeout=300s deployment/nginx-demo
-
-          # Wait for LoadBalancer service to get external IP
-          echo "Waiting for LoadBalancer service to get external IP..."
-          for i in {1..20}; do
-              EXTERNAL_IP=$(kubectl get svc nginx-demo-lb -o jsonpath='{.status.loadBalancer.ingress[0].ip}' 2>/dev/null || echo "")
-              if [[ -n "$EXTERNAL_IP" && "$EXTERNAL_IP" != "<none>" ]]; then
-                  echo "External IP assigned: $EXTERNAL_IP"
-                  break
-              fi
-              echo "Waiting for external IP... (attempt $i/20)"
-              sleep 30
-          done
-
-          # Get service status
-          echo "Service status:"
-          kubectl get svc nginx-demo-lb
-
-          # Get pod status
-          echo "Pod status:"
-          kubectl get pods -l app=nginx-demo
-
-          echo "Deployment completed successfully!"
-          EOF
-
+az aks get-credentials --resource-group "$RESOURCE_GROUP" --name "$AKS_NAME" --overwrite-existing
+kubectl apply -f ~/k8s/
+kubectl rollout status deployment/nginx-demo
+kubectl get svc nginx-demo-lb
+EOF
           chmod +x scripts/deploy-to-private-aks.sh
 
-      - name: Copy files to jumpbox
+      - name: Copy Files to Jumpbox
         run: |
-          echo "Copying k8s manifests to jumpbox..."
-          sshpass -p "${{ secrets.JUMPBOX_PASSWORD }}" scp -o StrictHostKeyChecking=no -r ./k8s azureuser@${{ secrets.JUMPBOX_IP }}:~/
+          sshpass -p "${{ secrets.JUMPBOX_PASSWORD }}" scp -o StrictHostKeyChecking=no -r k8s scripts azureuser@${{ secrets.JUMPBOX_IP }}:~/
 
-          echo "Copying deployment script to jumpbox..."
-          sshpass -p "${{ secrets.JUMPBOX_PASSWORD }}" scp -o StrictHostKeyChecking=no ./scripts/deploy-to-private-aks.sh azureuser@${{ secrets.JUMPBOX_IP }}:~/
-
-      - name: Deploy to AKS via jumpbox
+      - name: Run Deployment from Jumpbox
         run: |
-          sshpass -p "${{ secrets.JUMPBOX_PASSWORD }}" ssh -o StrictHostKeyChecking=no azureuser@${{ secrets.JUMPBOX_IP }} << 'SSH_EOF'
-            # Set environment variables for the script
-            export ARM_CLIENT_ID="${{ env.ARM_CLIENT_ID }}"
-            export ARM_CLIENT_SECRET="${{ env.ARM_CLIENT_SECRET }}"
-            export ARM_SUBSCRIPTION_ID="${{ env.ARM_SUBSCRIPTION_ID }}"
-            export ARM_TENANT_ID="${{ env.ARM_TENANT_ID }}"
-
-            # Set configuration variables
-            export ACR_NAME="${{ secrets.ACR_NAME }}"
+          sshpass -p "${{ secrets.JUMPBOX_PASSWORD }}" ssh -o StrictHostKeyChecking=no azureuser@${{ secrets.JUMPBOX_IP }} << 'EOF'
+            export ARM_CLIENT_ID="${{ secrets.ARM_CLIENT_ID }}"
+            export ARM_CLIENT_SECRET="${{ secrets.ARM_CLIENT_SECRET }}"
+            export ARM_TENANT_ID="${{ secrets.ARM_TENANT_ID }}"
+            export ARM_SUBSCRIPTION_ID="${{ secrets.ARM_SUBSCRIPTION_ID }}"
             export RESOURCE_GROUP="${{ secrets.RESOURCE_GROUP_NAME }}"
             export AKS_NAME="${{ secrets.AKS_CLUSTER_NAME }}"
+            bash ~/scripts/deploy-to-private-aks.sh
+EOF
 
-            # Make script executable and run it
-            chmod +x ~/deploy-to-private-aks.sh
-            ~/deploy-to-private-aks.sh
-          SSH_EOF
-
-      - name: Get Application URL
-        id: app-url
+      - name: Get App URL
+        id: get-url
         run: |
-          echo "Getting application URL..."
           for i in {1..10}; do
-              EXTERNAL_IP=$(sshpass -p "${{ secrets.JUMPBOX_PASSWORD }}" ssh -o StrictHostKeyChecking=no azureuser@${{ secrets.JUMPBOX_IP }} \
-                "kubectl get svc nginx-demo-lb -o jsonpath='{.status.loadBalancer.ingress[0].ip}' 2>/dev/null || echo ''")
-
-              if [[ -n "$EXTERNAL_IP" && "$EXTERNAL_IP" != "<none>" && "$EXTERNAL_IP" != "null" ]]; then
-                  echo "app_url=http://$EXTERNAL_IP" >> $GITHUB_OUTPUT
-                  echo "Application URL: http://$EXTERNAL_IP"
-                  break
-              fi
-              echo "Waiting for LoadBalancer IP... (attempt $i/10)"
-              sleep 30
+            EXTERNAL_IP=$(sshpass -p "${{ secrets.JUMPBOX_PASSWORD }}" ssh -o StrictHostKeyChecking=no azureuser@${{ secrets.JUMPBOX_IP }} \
+              "kubectl get svc nginx-demo-lb -o jsonpath='{.status.loadBalancer.ingress[0].ip}'" || echo "")
+            if [[ "$EXTERNAL_IP" != "" && "$EXTERNAL_IP" != "<none>" ]]; then
+              echo "app_url=http://$EXTERNAL_IP" >> $GITHUB_OUTPUT
+              break
+            fi
+            sleep 15
           done
 
-          if [[ -z "$EXTERNAL_IP" || "$EXTERNAL_IP" == "<none>" || "$EXTERNAL_IP" == "null" ]]; then
-              echo "Warning: LoadBalancer IP not available yet"
-              echo "app_url=LoadBalancer IP pending..." >> $GITHUB_OUTPUT
-          fi
-
       - name: Comment on PR
-        uses: actions/github-script@v7
         if: github.event_name == 'pull_request'
+        uses: actions/github-script@v7
         with:
           github-token: ${{ secrets.GITHUB_TOKEN }}
           script: |
-            const output = `#### 🚀 App Deployed to Private AKS Successfully!
-
-            **Application URL:** ${{ steps.app-url.outputs.app_url }}
-
-            **Deployed Resources:**
-            - ✅ NGINX Deployment (2 replicas)
-            - ✅ LoadBalancer Service
-            - ✅ RBAC for dev team
-            - ✅ Azure Files integration
-
-            **Infrastructure:**
-            - 🔒 Private AKS Cluster
-            - 🔒 Private ACR
-            - 🔒 Deployed via jumpbox
-
-            *Deployed via GitHub Actions to private AKS cluster*`;
-
             github.rest.issues.createComment({
               issue_number: context.issue.number,
               owner: context.repo.owner,
               repo: context.repo.repo,
-              body: output
+              body: `🚀 Deployment Complete!\n\nURL: ${{ steps.get-url.outputs.app_url }}`
             })
 
       - name: Deployment Summary
         run: |
           echo "## 🎉 Deployment Summary" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "**Application URL:** ${{ steps.app-url.outputs.app_url }}" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "**Infrastructure Details:**" >> $GITHUB_STEP_SUMMARY
-          echo "- AKS Cluster: ${{ secrets.AKS_CLUSTER_NAME }}" >> $GITHUB_STEP_SUMMARY
-          echo "- ACR: ${{ secrets.ACR_NAME }}" >> $GITHUB_STEP_SUMMARY
+          echo "**App URL:** ${{ steps.get-url.outputs.app_url }}" >> $GITHUB_STEP_SUMMARY
+          echo "- Cluster: ${{ secrets.AKS_CLUSTER_NAME }}" >> $GITHUB_STEP_SUMMARY
           echo "- Resource Group: ${{ secrets.RESOURCE_GROUP_NAME }}" >> $GITHUB_STEP_SUMMARY
-          echo "- Jumpbox IP: ${{ secrets.JUMPBOX_IP }}" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "**Deployment Method:** Private AKS via jumpbox" >> $GITHUB_STEP_SUMMARY
