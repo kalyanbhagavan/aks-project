@@ -94,3 +94,9 @@ resource "azurerm_role_assignment" "jumpbox_acr_push" {
   role_definition_name = "AcrPush"
   principal_id         = module.jumpbox.managed_identity_principal_id
 }
+
+resource "azurerm_key_vault_secret" "storage_account_key" {
+  name         = "storage-account-key"
+  value        = module.storage.storage_account_primary_access_key
+  key_vault_id = module.keyvault.key_vault_id
+}
