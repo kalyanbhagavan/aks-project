@@ -1,7 +1,7 @@
 #!/bin/bash
 
-# Deploy to Private AKS Cluster via Jumpbox
-# This script handles the complete deployment process for a private AKS cluster
+# Simplified Deploy to Private AKS Cluster via Jumpbox
+# This script handles deployment to a private AKS cluster using existing image
 
 set -e
 
@@ -10,9 +10,8 @@ RED='\033[0;31m'
 GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
 BLUE='\033[0;34m'
-NC='\033[0m' # No Color
+NC='\033[0m'
 
-# Function to print colored output
 print_status() {
     echo -e "${GREEN}[INFO]${NC} $1"
 }
@@ -29,18 +28,14 @@ print_header() {
     echo -e "${BLUE}[DEPLOYMENT]${NC} $1"
 }
 
-# Configuration - Use environment variables or GitHub secrets
+# Configuration - Use environment variables or defaults
 JUMPBOX_IP="${JUMPBOX_IP:-172.191.240.240}"
 JUMPBOX_USER="${JUMPBOX_USER:-azureuser}"
 JUMPBOX_PASSWORD="${JUMPBOX_PASSWORD:-P@ssw0rd123!}"
-ACR_NAME="${ACR_NAME:-aksdemoacr2025}"
 RESOURCE_GROUP="${RESOURCE_GROUP:-aks-challenge-rg}"
 AKS_NAME="${AKS_NAME:-aks-demo}"
-STORAGE_ACCOUNT="${STORAGE_ACCOUNT:-aksstatedemo2025}"
-DOCKER_IMAGE="nginx-demo"
-DOCKER_TAG="latest"
 
-# Check if required tools are installed
+# Check prerequisites
 check_prerequisites() {
     print_header "Checking prerequisites..."
 
@@ -56,28 +51,6 @@ check_prerequisites() {
         curl -sL https://aka.ms/InstallAzureCLIDeb | sudo bash
     fi
 
-    # Check and install kubelogin
-    if ! command -v kubelogin &> /dev/null; then
-        print_status "Installing kubelogin..."
-        # Install unzip if not present
-        if ! command -v unzip &> /dev/null; then
-            print_status "Installing unzip..."
-            sudo apt-get update && sudo apt-get install -y unzip
-        fi
-        # Download and install kubelogin
-        KUBELOGIN_VERSION=$(curl -s https://api.github.com/repos/Azure/kubelogin/releases/latest | jq -r '.tag_name')
-        curl -LO "https://github.com/Azure/kubelogin/releases/download/${KUBELOGIN_VERSION}/kubelogin-linux-amd64.zip"
-        unzip kubelogin-linux-amd64.zip
-        sudo mv bin/linux_amd64/kubelogin /usr/local/bin/
-        rm -rf bin kubelogin-linux-amd64.zip
-    fi
-
-    # Check Docker
-    if ! command -v docker &> /dev/null; then
-        print_error "Docker is not installed. Please install Docker first."
-        exit 1
-    fi
-
     # Check SSH
     if ! command -v ssh &> /dev/null; then
         print_error "SSH is not available. Please install SSH client."
@@ -91,59 +64,6 @@ check_prerequisites() {
     fi
 
     print_status "All prerequisites are satisfied"
-}
-
-# Build and push Docker image to ACR
-build_and_push_image() {
-    print_header "Building and pushing Docker image to ACR..."
-
-    # Check if Dockerfile exists
-    if [ ! -f "Dockerfile" ]; then
-        print_warning "Dockerfile not found. Creating a simple NGINX Dockerfile..."
-        cat > Dockerfile << 'EOF'
-FROM nginx:alpine
-COPY index.html /usr/share/nginx/html/
-EXPOSE 80
-CMD ["nginx", "-g", "daemon off;"]
-EOF
-
-        # Create a simple index.html
-        cat > index.html << 'EOF'
-<!DOCTYPE html>
-<html>
-<head>
-    <title>AKS Demo App</title>
-    <style>
-        body { font-family: Arial, sans-serif; text-align: center; margin-top: 50px; }
-        .container { max-width: 600px; margin: 0 auto; }
-        .success { color: green; }
-    </style>
-</head>
-<body>
-    <div class="container">
-        <h1>🚀 AKS Private Cluster Demo</h1>
-        <p class="success">✅ Successfully deployed to private AKS cluster!</p>
-        <p>This application is running on a private Azure Kubernetes Service cluster.</p>
-        <p>Deployed via jumpbox with secure access patterns.</p>
-    </div>
-</body>
-</html>
-EOF
-    fi
-
-    # Login to ACR
-    print_status "Logging in to Azure Container Registry..."
-    az acr login --name $ACR_NAME
-
-    # Build image
-    print_status "Building Docker image..."
-    docker build -t $ACR_NAME.azurecr.io/$DOCKER_IMAGE:$DOCKER_TAG .
-
-    # Push image
-    print_status "Pushing image to ACR..."
-    docker push $ACR_NAME.azurecr.io/$DOCKER_IMAGE:$DOCKER_TAG
-
-    print_status "Docker image successfully pushed to ACR"
 }
 
 # Deploy to AKS via jumpbox
@@ -172,10 +92,8 @@ deploy_to_aks() {
         }
 
         # Configuration
-        ACR_NAME="aksdemoacr2025"
         RESOURCE_GROUP="aks-challenge-rg"
         AKS_NAME="aks-demo"
-        STORAGE_ACCOUNT="aksstatedemo2025"
 
         print_status "Starting deployment process on jumpbox..."
 
@@ -198,21 +116,6 @@ deploy_to_aks() {
             curl -sL https://aka.ms/InstallAzureCLIDeb | sudo bash
         fi
 
-        if ! command -v kubelogin &> /dev/null; then
-            print_status "Installing kubelogin..."
-            # Install unzip if not present
-            if ! command -v unzip &> /dev/null; then
-                print_status "Installing unzip..."
-                sudo apt-get update && sudo apt-get install -y unzip
-            fi
-            # Download and install kubelogin
-            KUBELOGIN_VERSION=$(curl -s https://api.github.com/repos/Azure/kubelogin/releases/latest | jq -r '.tag_name')
-            curl -LO "https://github.com/Azure/kubelogin/releases/download/${KUBELOGIN_VERSION}/kubelogin-linux-amd64.zip"
-            unzip kubelogin-linux-amd64.zip
-            sudo mv bin/linux_amd64/kubelogin /usr/local/bin/
-            rm -rf bin kubelogin-linux-amd64.zip
-        fi
-
         # Login to Azure
         print_status "Logging in to Azure..."
         az login --service-principal \
@@ -226,48 +129,11 @@ deploy_to_aks() {
         print_status "Getting AKS credentials..."
         az aks get-credentials --resource-group $RESOURCE_GROUP --name $AKS_NAME --admin --overwrite-existing
 
-        # Get storage account key and create secret
-        print_status "Creating Azure Files secret..."
-        STORAGE_KEY=$(az storage account keys list --resource-group $RESOURCE_GROUP --account-name $STORAGE_ACCOUNT --query '[0].value' -o tsv)
-
-        # Delete existing secret if it exists
-        kubectl delete secret azure-files-secret --ignore-not-found=true
-
-        # Create the secret properly
-        kubectl create secret generic azure-files-secret \
-            --from-literal=azurestorageaccountname="$STORAGE_ACCOUNT" \
-            --from-literal=azurestorageaccountkey="$STORAGE_KEY"
-
-        # Update deployment.yaml with correct ACR name if needed
-        print_status "Updating deployment with correct ACR name..."
+        # Deploy the application using the simplified k8s scripts
+        print_status "Deploying nginx demo app..."
         cd ~/k8s
-        if [ -f "deployment.yaml" ]; then
-            # Replace placeholder ACR name with actual ACR name
-            sed -i "s|<ACR_NAME>|$ACR_NAME|g" deployment.yaml
-        fi
-
-        # Deploy all manifests from k8s folder
-        print_status "Deploying Kubernetes manifests from k8s/ folder..."
-        kubectl apply -f .
-
-        # Wait for deployment to be ready
-        print_status "Waiting for deployment to be ready..."
-        kubectl wait --for=condition=available --timeout=300s deployment/nginx-demo
-
-        # Get service information
-        print_status "Getting service information..."
-        kubectl get pods
-        kubectl get svc nginx-demo-lb
-
-        # Get external IP
-        EXTERNAL_IP=$(kubectl get svc nginx-demo-lb -o jsonpath='{.status.loadBalancer.ingress[0].ip}')
-        if [ -n "$EXTERNAL_IP" ]; then
-            print_status "Application is accessible at: http://$EXTERNAL_IP"
-            echo "EXTERNAL_IP=$EXTERNAL_IP" > /tmp/external_ip.txt
-        else
-            print_warning "External IP not yet assigned. Please check again in a few minutes:"
-            print_warning "kubectl get svc nginx-demo-lb"
-        fi
+        chmod +x *.sh
+        ./deploy.sh
 
         print_status "Deployment completed successfully!"
 SSH_EOF
@@ -318,9 +184,6 @@ main() {
 
     # Azure login
     azure_login
-
-    # Build and push Docker image
-    build_and_push_image
 
     # Deploy to AKS
     deploy_to_aks

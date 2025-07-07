@@ -50,14 +50,14 @@ jobs:
       - name: Install sshpass
         run: sudo apt-get update && sudo apt-get install -y sshpass
 
-      - name: Copy K8s Files to Jumpbox
+      - name: Copy Files to Jumpbox
         run: |
-          echo "Copying simplified k8s manifests and scripts to jumpbox..."
-          sshpass -p "${{ secrets.JUMPBOX_PASSWORD }}" scp -o StrictHostKeyChecking=no -r ./k8s azureuser@${{ secrets.JUMPBOX_IP }}:~/
+          echo "Copying k8s manifests and optimized scripts to jumpbox..."
+          sshpass -p "${{ secrets.JUMPBOX_PASSWORD }}" scp -o StrictHostKeyChecking=no -r ./k8s ./scripts azureuser@${{ secrets.JUMPBOX_IP }}:~/
 
       - name: Deploy Application on Jumpbox
         run: |
-          echo "Deploying nginx demo app via jumpbox..."
+          echo "Deploying nginx demo app via jumpbox using optimized script..."
           sshpass -p "${{ secrets.JUMPBOX_PASSWORD }}" ssh -o StrictHostKeyChecking=no azureuser@${{ secrets.JUMPBOX_IP }} << EOF
             # Set Azure credentials from GitHub secrets
             export ARM_CLIENT_ID="$(echo '${{ secrets.AZURE_CREDENTIALS }}' | jq -r .clientId)"
@@ -69,17 +69,10 @@ jobs:
             export RESOURCE_GROUP="${{ secrets.RESOURCE_GROUP_NAME }}"
             export AKS_NAME="${{ secrets.AKS_CLUSTER_NAME }}"
 
-            # Login to Azure
-            az login --service-principal -u \$ARM_CLIENT_ID -p \$ARM_CLIENT_SECRET --tenant \$ARM_TENANT_ID
-            az account set --subscription \$ARM_SUBSCRIPTION_ID
-
-            # Get AKS credentials
-            az aks get-credentials --resource-group \$RESOURCE_GROUP --name \$AKS_NAME --overwrite-existing
-
-            # Deploy the application
-            cd ~/k8s
-            chmod +x *.sh
-            ./deploy.sh
+            # Run the optimized setup and deploy script
+            cd ~/scripts
+            chmod +x setup-and-deploy.sh
+            ./setup-and-deploy.sh
           EOF
 
       - name: Get App URL from Jumpbox
