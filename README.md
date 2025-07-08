@@ -149,11 +149,6 @@ github_runner_token   = "your-runner-token"
    - Run the workflow manually or push to main branch
    - Wait for infrastructure deployment to complete
 
-3. **Setup Key Vault Access** (Post-deployment):
-   ```bash
-   # Run the Key Vault access setup script
-   ./scripts/setup-keyvault-access.sh
-   ```
 
 #### Option B: Local Deployment
 ```bash
@@ -309,23 +304,6 @@ ssh azureuser@<JUMPBOX_IP> "tail -f /var/log/cloud-init-output.log"
 # Check Key Vault access
 az keyvault secret list --vault-name <keyvault-name>
 ```
-
-## Security Features
-
-### Network Security
-- **Private Subnets**: All components deployed in private subnets
-- **Network Security Groups**: Controlled access to resources
-- **Private Endpoints**: ACR and Key Vault use private endpoints
-
-### Identity & Access
-- **Managed Identities**: Jumpbox and AKS use managed identities
-- **Service Principal**: GitHub Actions uses service principal
-- **RBAC**: Kubernetes role-based access control
-
-### Secrets Management
-- **Azure Key Vault**: Centralized secrets management
-- **Access Policies**: Fine-grained access control
-- **Secret Rotation**: Support for secret rotation
 
 ## Cleanup
 
