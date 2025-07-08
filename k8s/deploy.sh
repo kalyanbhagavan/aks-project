@@ -87,7 +87,7 @@ kubectl get svc nginx-demo-service
 # Get Ingress Controller external IP
 EXTERNAL_IP=$(kubectl get svc ingress-nginx-controller -n ingress-nginx -o jsonpath='{.status.loadBalancer.ingress[0].ip}')
 if [ -n "$EXTERNAL_IP" ]; then
-    print_status "✅ Application deployed successfully!"
+    print_status " Application deployed successfully!"
     print_status "🌐 Ingress Controller URL: http://$EXTERNAL_IP"
     print_status "🌐 Application URL: http://$EXTERNAL_IP (add Host header: nginx-demo.local)"
     echo "EXTERNAL_IP=$EXTERNAL_IP" > /tmp/external_ip.txt

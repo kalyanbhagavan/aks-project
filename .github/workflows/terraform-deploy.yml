@@ -81,7 +81,7 @@ jobs:
           echo "::add-mask::$KEY"
           echo "TF_STATE_KEY=$KEY" >> $GITHUB_ENV
           echo "ARM_ACCESS_KEY=$KEY" >> $GITHUB_ENV
-          echo "✅ Storage account key retrieved and masked"
+          echo " Storage account key retrieved and masked"
 
       - name: Ensure backend container exists
         run: |
@@ -107,7 +107,7 @@ jobs:
           echo "ARM_CLIENT_SECRET=$CLIENT_SECRET" >> $GITHUB_ENV
           echo "ARM_SUBSCRIPTION_ID=$SUBSCRIPTION_ID" >> $GITHUB_ENV
           echo "ARM_TENANT_ID=$TENANT_ID" >> $GITHUB_ENV
-          echo "✅ Azure credentials extracted and masked"
+          echo " Azure credentials extracted and masked"
 
       - name: Setup Terraform Backend
         run: |
@@ -123,7 +123,7 @@ jobs:
             }
           }
           EOF
-          echo "✅ Backend configuration created"
+          echo " Backend configuration created"
 
       - name: Terraform Init
         run: terraform init
@@ -134,9 +134,9 @@ jobs:
           # This helps resolve stuck locks from previous failed runs
           echo "Checking for state locks..."
           if terraform force-unlock -force 0c23d781-0084-0329-6174-2bca3e0f9e39 2>/dev/null; then
-            echo "✅ State was locked and has been force unlocked"
+            echo " State was locked and has been force unlocked"
           else
-            echo "ℹ️  State is not locked or unlock not needed"
+            echo " State is not locked or unlock not needed"
           fi
         continue-on-error: true
 
@@ -146,7 +146,7 @@ jobs:
 
       - name: Terraform Validate
         run: terraform validate
-        
+
       - name: Terraform State Unlock
         run: |
           echo "Checking for Terraform state locks..."
@@ -158,9 +158,9 @@ jobs:
           # List any existing locks
           echo "Checking for existing state locks..."
           if terraform force-unlock -force 0c23d781-0084-0329-6174-2bca3e0f9e39 2>/dev/null; then
-            echo "✅ State lock was found and has been force unlocked"
+            echo " State lock was found and has been force unlocked"
           else
-            echo "ℹ️  No state locks found or unlock not needed"
+            echo " No state locks found or unlock not needed"
           fi
 
           # Additional safety check - try to unlock any other potential locks
@@ -172,7 +172,7 @@ jobs:
             fi
           done
 
-          echo "✅ State unlock process completed"
+          echo " State unlock process completed"
         continue-on-error: true
 
       - name: Terraform Plan

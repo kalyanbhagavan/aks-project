@@ -42,10 +42,10 @@ jobs:
       - name: Validate Required Secrets
         run: |
           if [[ -z "${{ secrets.ACR_NAME }}" ]]; then
-            echo "❌ Error: ACR_NAME secret is required"
+            echo " Error: ACR_NAME secret is required"
             exit 1
           fi
-          echo "✅ All required secrets are present"
+          echo " All required secrets are present"
 
       - name: Extract Azure Credentials
         run: |
@@ -67,7 +67,7 @@ jobs:
           echo "ARM_CLIENT_SECRET=$CLIENT_SECRET" >> $GITHUB_ENV
           echo "ARM_SUBSCRIPTION_ID=$SUBSCRIPTION_ID" >> $GITHUB_ENV
           echo "ARM_TENANT_ID=$TENANT_ID" >> $GITHUB_ENV
-          echo "✅ Azure credentials extracted and masked"
+          echo " Azure credentials extracted and masked"
 
       - name: Set Image Tag
         id: image-tag
@@ -88,7 +88,7 @@ jobs:
         run: |
           echo "Enabling public network access for ACR..."
           az acr update --name ${{ secrets.ACR_NAME }} --public-network-enabled true
-          echo "✅ ACR public access enabled"
+          echo " ACR public access enabled"
 
       - name: Login to ACR
         run: |
@@ -116,7 +116,7 @@ jobs:
           # Push the image
           docker push $IMAGE_NAME
 
-          echo "✅ Successfully built and pushed image"
+          echo " Successfully built and pushed image"
 
       - name: Set Image Name Output
         id: image-name
@@ -151,22 +151,22 @@ jobs:
       - name: Validate Required Secrets
         run: |
           if [[ -z "${{ secrets.JUMPBOX_IP }}" ]]; then
-            echo "❌ Error: JUMPBOX_IP secret is required"
+            echo " Error: JUMPBOX_IP secret is required"
             exit 1
           fi
           if [[ -z "${{ secrets.JUMPBOX_PASSWORD }}" ]]; then
-            echo "❌ Error: JUMPBOX_PASSWORD secret is required"
+            echo " Error: JUMPBOX_PASSWORD secret is required"
             exit 1
           fi
           if [[ -z "${{ secrets.RESOURCE_GROUP_NAME }}" ]]; then
-            echo "❌ Error: RESOURCE_GROUP_NAME secret is required"
+            echo " Error: RESOURCE_GROUP_NAME secret is required"
             exit 1
           fi
           if [[ -z "${{ secrets.AKS_CLUSTER_NAME }}" ]]; then
-            echo "❌ Error: AKS_CLUSTER_NAME secret is required"
+            echo " Error: AKS_CLUSTER_NAME secret is required"
             exit 1
           fi
-          echo "✅ All required secrets are present"
+          echo " All required secrets are present"
 
       - name: Install sshpass
         run: sudo apt-get update && sudo apt-get install -y sshpass
@@ -203,7 +203,7 @@ jobs:
           EXTERNAL_IP=$(sshpass -p "${{ secrets.JUMPBOX_PASSWORD }}" ssh -o StrictHostKeyChecking=no azureuser@${{ secrets.JUMPBOX_IP }} \
             "cat /tmp/external_ip.txt 2>/dev/null || echo 'IP not available'")
           echo "app_url=http://$EXTERNAL_IP" >> $GITHUB_OUTPUT
-          echo "✅ App URL: http://$EXTERNAL_IP"
+          echo " App URL: http://$EXTERNAL_IP"
 
       - name: Check Application Status
         run: |
@@ -215,7 +215,7 @@ jobs:
 
       - name: Deployment Summary
         run: |
-          echo "## 🚀 Build and Deploy Summary" >> $GITHUB_STEP_SUMMARY
+          echo "##  Build and Deploy Summary" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "**Docker Image:** ${{ needs.build-image.outputs.image-name }}" >> $GITHUB_STEP_SUMMARY
           echo "**App URL:** ${{ steps.app-url.outputs.app_url }}" >> $GITHUB_STEP_SUMMARY
@@ -225,7 +225,7 @@ jobs:
           echo "- Registry: ${{ secrets.ACR_NAME }}.azurecr.io" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "### What was deployed:" >> $GITHUB_STEP_SUMMARY
-          echo "- ✅ Docker image built and pushed to ACR" >> $GITHUB_STEP_SUMMARY
-          echo "- ✅ NGINX Ingress Controller deployed" >> $GITHUB_STEP_SUMMARY
-          echo "- ✅ Application deployed with LoadBalancer" >> $GITHUB_STEP_SUMMARY
-          echo "- ✅ RBAC roles and bindings configured" >> $GITHUB_STEP_SUMMARY
+          echo "-  Docker image built and pushed to ACR" >> $GITHUB_STEP_SUMMARY
+          echo "-  NGINX Ingress Controller deployed" >> $GITHUB_STEP_SUMMARY
+          echo "-  Application deployed with LoadBalancer" >> $GITHUB_STEP_SUMMARY
+          echo "-  RBAC roles and bindings configured" >> $GITHUB_STEP_SUMMARY

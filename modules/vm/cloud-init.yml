@@ -122,19 +122,19 @@ runcmd:
 
     # Check if runner is configured
     if [ -f "/home/${admin_username}/actions-runner/.runner" ]; then
-        echo "✅ Runner is configured"
+        echo " Runner is configured"
         cat /home/${admin_username}/actions-runner/.runner | jq -r '"Repository: " + .gitHubUrl + "\nRunner Name: " + .agentName + "\nRunner ID: " + (.agentId | tostring)'
     else
-        echo "❌ Runner is not configured"
+        echo " Runner is not configured"
         echo "Run ./configure-runner.sh to configure the runner"
     fi
 
     # Check service status
     SERVICE_NAME="actions.runner.$(whoami).aks-jumpbox-runner"
     if systemctl is-active --quiet "$SERVICE_NAME"; then
-        echo "✅ Runner service is running"
+        echo " Runner service is running"
     else
-        echo "❌ Runner service is not running"
+        echo " Runner service is not running"
         echo "Start with: sudo systemctl start $SERVICE_NAME"
     fi
 
@@ -188,7 +188,7 @@ runcmd:
     KEYVAULT_NAME=$(az keyvault list --resource-group aks-challenge-rg --query "[?starts_with(name, 'aks-demo-kv-')].name" -o tsv | head -1)
 
     if [ -z "$KEYVAULT_NAME" ]; then
-        echo "❌ Could not find Key Vault in resource group"
+        echo " Could not find Key Vault in resource group"
         echo "Please run configure-runner.sh manually with the repository URL and token"
         exit 1
     fi
@@ -199,14 +199,14 @@ runcmd:
     GITHUB_TOKEN=$(az keyvault secret show --vault-name "$KEYVAULT_NAME" --name "github-runner-token" --query value -o tsv 2>/dev/null || echo "")
 
     if [ -n "$GITHUB_REPO_URL" ] && [ -n "$GITHUB_TOKEN" ]; then
-        echo "✅ Found configuration in Key Vault"
+        echo " Found configuration in Key Vault"
         export GITHUB_REPO_URL="$GITHUB_REPO_URL"
         export GITHUB_TOKEN="$GITHUB_TOKEN"
         ./configure-runner.sh
         ./runner-start.sh
-        echo "✅ Runner configured and started successfully!"
+        echo " Runner configured and started successfully!"
     else
-        echo "❌ Configuration not found in Key Vault"
+        echo " Configuration not found in Key Vault"
         echo "Please run configure-runner.sh manually with the repository URL and token"
         echo "Or store the configuration in Azure Key Vault:"
         echo "  az keyvault secret set --vault-name $KEYVAULT_NAME --name github-repo-url --value 'https://github.com/owner/repo'"

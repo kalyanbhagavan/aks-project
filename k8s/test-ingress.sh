@@ -59,7 +59,7 @@ print_status "Ingress Controller External IP: $EXTERNAL_IP"
 # Test Ingress Controller health
 print_status "Testing Ingress Controller health..."
 if curl -s -o /dev/null -w "%{http_code}" "http://$EXTERNAL_IP/healthz" | grep -q "404"; then
-    print_status "✅ Ingress Controller is responding"
+    print_status " Ingress Controller is responding"
 else
     print_warning "⚠️  Ingress Controller health check failed"
 fi
@@ -69,7 +69,7 @@ print_status "Testing application access..."
 RESPONSE=$(curl -s -H "Host: nginx-demo.local" "http://$EXTERNAL_IP/")
 
 if echo "$RESPONSE" | grep -q "nginx"; then
-    print_status "✅ Application is accessible via Ingress"
+    print_status " Application is accessible via Ingress"
     print_status "🌐 Application URL: http://$EXTERNAL_IP"
     print_status "📝 Add Host header: nginx-demo.local"
 else

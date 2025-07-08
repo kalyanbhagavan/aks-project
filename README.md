@@ -6,7 +6,8 @@ This code challenge demonstrates a secure, production-grade Azure Kubernetes Ser
 - **Private AKS cluster** (no public API endpoint)
 - **Private ACR** - Only accessible from VNet
 - **NGINX Ingress Controller** for external traffic management
-- **Jumpbox VM** for secure cluster access
+- **Jumpbox VM** for secure cluster access with managed identity
+- **Azure Key Vault** for secure secrets management
 - **Automated CI/CD** with Docker image building and deployment
 - **RBAC** for access control
 - **Azure Storage** for Terraform state management
@@ -41,7 +42,7 @@ aks-project/
 │   ├── setup-and-deploy.sh    # Azure auth + deployment
 │   ├── deploy-to-private-aks.sh # Local to jumpbox deployment
 │   ├── mask-utils.sh      # Security masking utilities
-│   └── README.md          # Scripts documentation
+│   ├── setup-keyvault-access.sh # Key Vault access policy setup
 ├── app/                   # Application source
 │   ├── Dockerfile         # Docker image definition
 │   └── index.html         # Sample web page
@@ -63,7 +64,7 @@ aks-project/
 
 ### 1. Clone the Repository
 ```bash
-git clone <your-repo-url>
+git clone git@github.com:kalyanbhagavan/aks-project.git
 cd aks-project
 ```
 
@@ -128,6 +129,8 @@ admin_group_object_ids = ["00000000-0000-0000-0000-000000000000"]
 jumpbox_vm_name       = "aks-jumpbox"
 jumpbox_admin_username = "azureuser"
 jumpbox_admin_password = "P@ssw0rd123!"
+github_repo_url       = "https://github.com/your-username/your-repo"
+github_runner_token   = "your-runner-token"
 ```
 
 ### 5. Deploy Infrastructure
@@ -143,6 +146,12 @@ jumpbox_admin_password = "P@ssw0rd123!"
    - Run the workflow manually or push to main branch
    - Wait for infrastructure deployment to complete
 
+3. **Setup Key Vault Access** (Post-deployment):
+   ```bash
+   # Run the Key Vault access setup script
+   ./scripts/setup-keyvault-access.sh
+   ```
+
 #### Option B: Local Deployment
 ```bash
 # Initialize Terraform
@@ -153,6 +162,7 @@ terraform plan
 
 # Apply changes
 terraform apply
+
 ```
 
 ### 6. Build and Deploy Application
@@ -215,6 +225,7 @@ All deployment scripts include built-in masking functions:
 ```bash
 # Source the masking utilities
 source ./scripts/mask-utils.sh
+```
 
 ## Troubleshooting
 
@@ -224,9 +235,28 @@ source ./scripts/mask-utils.sh
 ```bash
 # Force unlock state (use with caution)
 terraform force-unlock <lock-id>
+
+# For remote state locks, use Azure CLI to break the lease
+az storage blob lease break \
+  --container-name <container> \
+  --name terraform.tfstate \
+  --account-name <storage-account> \
+  --account-key <storage-key>
 ```
 
-#### 2. AKS Connection Issues
+#### 2. Key Vault Access Issues
+```bash
+# Check if jumpbox has access to Key Vault
+az keyvault show --name <keyvault-name> --resource-group <rg-name>
+
+# Verify managed identity
+az vm show --resource-group <rg> --name <vm-name> --query "identity"
+
+# Setup access policies manually
+./scripts/setup-keyvault-access.sh
+```
+
+#### 3. AKS Connection Issues
 ```bash
 # Get credentials
 az aks get-credentials --resource-group <RG> --name <CLUSTER> --admin
@@ -235,7 +265,7 @@ az aks get-credentials --resource-group <RG> --name <CLUSTER> --admin
 kubectl cluster-info
 ```
 
-#### 3. ACR Login Issues
+#### 4. ACR Login Issues
 ```bash
 # Enable public access temporarily
 az acr update --name <ACR_NAME> --public-network-enabled true
@@ -244,7 +274,7 @@ az acr update --name <ACR_NAME> --public-network-enabled true
 az acr login --name <ACR_NAME>
 ```
 
-#### 4. Jumpbox Connection Issues
+#### 5. Jumpbox Connection Issues
 ```bash
 # Test SSH connection
 ssh azureuser@<JUMPBOX_IP>
@@ -262,13 +292,6 @@ env:
   ACTIONS_STEP_DEBUG: true
   ACTIONS_RUNNER_DEBUG: true
 ```
-
-#### Check Masked Values
-All sensitive values are automatically masked in GitHub Actions logs. To verify masking is working:
-1. Check workflow logs for `***` patterns
-2. Verify no plain-text secrets appear in outputs
-3. Use the masking utility functions in scripts
-
 ### Log Analysis
 ```bash
 # Check application logs
@@ -279,7 +302,27 @@ kubectl logs -f deployment/nginx-ingress-controller -n ingress-nginx
 
 # Check jumpbox deployment logs
 ssh azureuser@<JUMPBOX_IP> "tail -f /var/log/cloud-init-output.log"
+
+# Check Key Vault access
+az keyvault secret list --vault-name <keyvault-name>
 ```
+
+## Security Features
+
+### Network Security
+- **Private Subnets**: All components deployed in private subnets
+- **Network Security Groups**: Controlled access to resources
+- **Private Endpoints**: ACR and Key Vault use private endpoints
+
+### Identity & Access
+- **Managed Identities**: Jumpbox and AKS use managed identities
+- **Service Principal**: GitHub Actions uses service principal
+- **RBAC**: Kubernetes role-based access control
+
+### Secrets Management
+- **Azure Key Vault**: Centralized secrets management
+- **Access Policies**: Fine-grained access control
+- **Secret Rotation**: Support for secret rotation
 
 ## Cleanup
 
@@ -295,3 +338,29 @@ terraform destroy
 cd ~/k8s
 ./destroy.sh
 ```
+
+### Cleanup Key Vault
+```bash
+# Remove Key Vault access policies
+az keyvault delete-policy \
+  --name <keyvault-name> \
+  --resource-group <rg-name> \
+  --object-id <jumpbox-identity-id>
+```
+
+## Recent Updates
+
+### v2.0 - Key Vault Integration
+- ✅ Added Azure Key Vault for secrets management
+- ✅ Integrated jumpbox managed identity with Key Vault
+- ✅ Fixed circular dependency issues
+- ✅ Updated storage module to use new Azure provider syntax
+- ✅ Added Key Vault access setup script
+- ✅ Improved error handling and troubleshooting
+
+### v1.0 - Initial Release
+- ✅ Private AKS cluster deployment
+- ✅ NGINX Ingress Controller
+- ✅ Jumpbox VM with managed identity
+- ✅ Automated CI/CD pipeline
+- ✅ Security masking implementation

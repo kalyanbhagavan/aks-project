@@ -80,7 +80,7 @@ jobs:
             --output tsv)
           echo "::add-mask::$STORAGE_KEY"
           echo "storage_key=$STORAGE_KEY" >> $GITHUB_OUTPUT
-          echo "✅ Storage account key retrieved and masked"
+          echo " Storage account key retrieved and masked"
 
       - name: Output Backend Configuration
         run: |

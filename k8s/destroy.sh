@@ -68,5 +68,5 @@ kubectl delete role dev-team-role --ignore-not-found=true
 print_status "Waiting for pods to be terminated..."
 kubectl wait --for=delete pod -l app=nginx-demo --timeout=60s 2>/dev/null || true
 
-print_status "✅ All resources deleted successfully!"
+print_status " All resources deleted successfully!"
 print_status "Cleanup completed!"

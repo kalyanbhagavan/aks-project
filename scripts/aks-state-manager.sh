@@ -819,7 +819,7 @@ EOF"
         --command-id RunShellScript \
         --scripts "
             set -e
-            echo '🚀 Building and pushing Docker image...'
+            echo ' Building and pushing Docker image...'
 
             # Login to Azure and ACR
             az login --identity
@@ -833,7 +833,7 @@ EOF"
             docker push \${ACR_LOGIN_SERVER}/demo-app:\${IMAGE_TAG}
             docker push \${ACR_LOGIN_SERVER}/demo-app:latest
 
-            echo '✅ Build and push completed!'
+            echo ' Build and push completed!'
         "
 
     print_success "Application built and pushed via jumpbox"
