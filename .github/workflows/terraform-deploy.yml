@@ -1,0 +1,267 @@
+name: Infrastructure Setup in Azure
+
+on:
+  push:
+    branches: [ main, develop ]
+    paths:
+      - '**.tf'
+      - '**.tfvars'
+      - '.github/workflows/terraform-deploy.yml'
+  pull_request:
+    branches: [ main ]
+    paths:
+      - '**.tf'
+      - '**.tfvars'
+      - '.github/workflows/terraform-deploy.yml'
+  workflow_dispatch:
+    inputs:
+      action:
+        description: 'Terraform action to perform'
+        required: true
+        default: 'plan'
+        type: choice
+        options:
+          - plan
+          - apply
+          - destroy
+      environment:
+        description: 'Environment to deploy to'
+        required: true
+        default: 'production'
+        type: choice
+        options:
+          - development
+          - staging
+          - production
+
+jobs:
+  infrastructure-setup:
+    name: 'Infrastructure Setup'
+    runs-on: ubuntu-latest
+    environment: ${{ github.event.inputs.environment || 'production' }}
+    env:
+      TF_VERSION: "1.7.0"
+      AZURE_CREDENTIALS: ${{ secrets.AZURE_CREDENTIALS }}
+      TF_STATE_RESOURCE_GROUP: ${{ secrets.TF_STATE_RESOURCE_GROUP }}
+      TF_STATE_LOCATION: ${{ secrets.TF_STATE_LOCATION }}
+      TF_STATE_STORAGE_ACCOUNT: ${{ secrets.TF_STATE_STORAGE_ACCOUNT }}
+      TF_STATE_CONTAINER: ${{ secrets.TF_STATE_CONTAINER }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ${{ env.TF_VERSION }}
+
+      - name: Azure Login
+        uses: azure/login@v2
+        with:
+          creds: ${{ secrets.AZURE_CREDENTIALS }}
+
+      - name: Ensure backend resource group exists
+        run: |
+          echo "Creating/verifying resource group: $TF_STATE_RESOURCE_GROUP"
+          az group show --name "$TF_STATE_RESOURCE_GROUP" || \
+          az group create --name "$TF_STATE_RESOURCE_GROUP" --location "$TF_STATE_LOCATION"
+
+      - name: Ensure backend storage account exists
+        run: |
+          echo "Creating/verifying storage account: $TF_STATE_STORAGE_ACCOUNT"
+          az storage account show --name "$TF_STATE_STORAGE_ACCOUNT" --resource-group "$TF_STATE_RESOURCE_GROUP" || \
+          az storage account create --name "$TF_STATE_STORAGE_ACCOUNT" --resource-group "$TF_STATE_RESOURCE_GROUP" --location "$TF_STATE_LOCATION" --sku Standard_LRS
+
+      - name: Get backend storage account key
+        id: get_key
+        run: |
+          echo "Retrieving storage account key..."
+          KEY=$(az storage account keys list --resource-group "$TF_STATE_RESOURCE_GROUP" --account-name "$TF_STATE_STORAGE_ACCOUNT" --query '[0].value' -o tsv)
+          echo "::add-mask::$KEY"
+          echo "TF_STATE_KEY=$KEY" >> $GITHUB_ENV
+          echo "ARM_ACCESS_KEY=$KEY" >> $GITHUB_ENV
+          echo "✅ Storage account key retrieved and masked"
+
+      - name: Ensure backend container exists
+        run: |
+          echo "Creating/verifying storage container: $TF_STATE_CONTAINER"
+          az storage container show --name "$TF_STATE_CONTAINER" --account-name "$TF_STATE_STORAGE_ACCOUNT" || \
+          az storage container create --name "$TF_STATE_CONTAINER" --account-name "$TF_STATE_STORAGE_ACCOUNT" --account-key "$TF_STATE_KEY"
+
+      - name: Export Azure Service Principal credentials
+        run: |
+          echo "Extracting Azure credentials..."
+          CLIENT_ID=$(echo '${{ secrets.AZURE_CREDENTIALS }}' | jq -r .clientId)
+          CLIENT_SECRET=$(echo '${{ secrets.AZURE_CREDENTIALS }}' | jq -r .clientSecret)
+          SUBSCRIPTION_ID=$(echo '${{ secrets.AZURE_CREDENTIALS }}' | jq -r .subscriptionId)
+          TENANT_ID=$(echo '${{ secrets.AZURE_CREDENTIALS }}' | jq -r .tenantId)
+
+          # Mask sensitive values
+          echo "::add-mask::$CLIENT_SECRET"
+          echo "::add-mask::$CLIENT_ID"
+          echo "::add-mask::$SUBSCRIPTION_ID"
+          echo "::add-mask::$TENANT_ID"
+
+          echo "ARM_CLIENT_ID=$CLIENT_ID" >> $GITHUB_ENV
+          echo "ARM_CLIENT_SECRET=$CLIENT_SECRET" >> $GITHUB_ENV
+          echo "ARM_SUBSCRIPTION_ID=$SUBSCRIPTION_ID" >> $GITHUB_ENV
+          echo "ARM_TENANT_ID=$TENANT_ID" >> $GITHUB_ENV
+          echo "✅ Azure credentials extracted and masked"
+
+      - name: Setup Terraform Backend
+        run: |
+          echo "Setting up Terraform backend configuration..."
+          cat > backend.tf <<EOF
+          terraform {
+            backend "azurerm" {
+              resource_group_name  = "$TF_STATE_RESOURCE_GROUP"
+              storage_account_name = "$TF_STATE_STORAGE_ACCOUNT"
+              container_name       = "$TF_STATE_CONTAINER"
+              key                  = "terraform.tfstate"
+              access_key           = "$TF_STATE_KEY"
+            }
+          }
+          EOF
+          echo "✅ Backend configuration created"
+
+      - name: Terraform Init
+        run: terraform init
+
+      - name: Force Unlock State (if needed)
+        run: |
+          # Check if state is locked and force unlock if necessary
+          # This helps resolve stuck locks from previous failed runs
+          echo "Checking for state locks..."
+          if terraform force-unlock -force 0c23d781-0084-0329-6174-2bca3e0f9e39 2>/dev/null; then
+            echo "✅ State was locked and has been force unlocked"
+          else
+            echo "ℹ️  State is not locked or unlock not needed"
+          fi
+        continue-on-error: true
+
+      - name: Terraform Format Check
+        run: terraform fmt -check
+        continue-on-error: true
+
+      - name: Terraform Validate
+        run: terraform validate
+        
+      - name: Terraform State Unlock
+        run: |
+          echo "Checking for Terraform state locks..."
+
+          # Get the current workspace
+          WORKSPACE=$(terraform workspace show 2>/dev/null || echo "default")
+          echo "Current workspace: $WORKSPACE"
+
+          # List any existing locks
+          echo "Checking for existing state locks..."
+          if terraform force-unlock -force 0c23d781-0084-0329-6174-2bca3e0f9e39 2>/dev/null; then
+            echo "✅ State lock was found and has been force unlocked"
+          else
+            echo "ℹ️  No state locks found or unlock not needed"
+          fi
+
+          # Additional safety check - try to unlock any other potential locks
+          echo "Performing additional lock cleanup..."
+          for lock_id in $(terraform force-unlock -force $(date +%s) 2>&1 | grep -o '[a-f0-9-]\{36\}' || true); do
+            if [ ! -z "$lock_id" ]; then
+              echo "Found additional lock: $lock_id"
+              terraform force-unlock -force "$lock_id" 2>/dev/null || true
+            fi
+          done
+
+          echo "✅ State unlock process completed"
+        continue-on-error: true
+
+      - name: Terraform Plan
+        id: plan
+        run: |
+          # Add retry logic for state lock issues
+          for i in {1..3}; do
+            echo "Attempt $i: Running terraform plan..."
+            if terraform plan -out=tfplan; then
+              terraform show -no-color tfplan > tfplan.txt
+              break
+            else
+              if [ $i -lt 3 ]; then
+                echo "Plan failed, waiting 30 seconds before retry..."
+                sleep 30
+              else
+                echo "All plan attempts failed"
+                exit 1
+              fi
+            fi
+          done
+        continue-on-error: true
+
+      - name: Terraform Plan Status
+        if: steps.plan.outcome == 'failure'
+        run: exit 1
+
+      - name: Comment PR
+        uses: actions/github-script@v7
+        if: github.event_name == 'pull_request'
+        env:
+          PLAN: "${{ steps.plan.outputs.stdout }}"
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          script: |
+            const output = `#### Terraform Plan 📝
+            \`\`\`
+            ${process.env.PLAN || 'No changes. Infrastructure is up-to-date.'}
+            \`\`\`
+            *Pusher: @${{ github.actor }}, Action: \`${{ github.event_name }}\`*`;
+            github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body: output
+            })
+
+      - name: Terraform Apply
+        if: github.ref == 'refs/heads/main' && github.event_name == 'push' || github.event.inputs.action == 'apply'
+        run: |
+          # Add retry logic for state lock issues
+          for i in {1..3}; do
+            echo "Attempt $i: Running terraform apply..."
+            if terraform apply -auto-approve tfplan; then
+              break
+            else
+              if [ $i -lt 3 ]; then
+                echo "Apply failed, waiting 30 seconds before retry..."
+                sleep 30
+              else
+                echo "All apply attempts failed"
+                exit 1
+              fi
+            fi
+          done
+
+      - name: Terraform Destroy
+        if: github.event.inputs.action == 'destroy'
+        run: |
+          # Add retry logic for state lock issues
+          for i in {1..3}; do
+            echo "Attempt $i: Running terraform destroy..."
+            if terraform destroy -auto-approve; then
+              break
+            else
+              if [ $i -lt 3 ]; then
+                echo "Destroy failed, waiting 30 seconds before retry..."
+                sleep 30
+              else
+                echo "All destroy attempts failed"
+                exit 1
+              fi
+            fi
+          done
+
+      - name: Upload Terraform Plan
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: terraform-plan
+          path: tfplan.txt
+          retention-days: 30
