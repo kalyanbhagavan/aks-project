@@ -1,0 +1,231 @@
+name: Build Image Push to ACR and Deploy to AKS
+
+on:
+  push:
+    branches: [ main, develop ]
+    paths:
+      - 'app/**'
+      - 'k8s/**'
+      - 'Dockerfile'
+      - '.github/workflows/build-and-deploy.yml'
+  pull_request:
+    branches: [ main ]
+    paths:
+      - 'app/**'
+      - 'k8s/**'
+      - 'Dockerfile'
+      - '.github/workflows/build-and-deploy.yml'
+  workflow_dispatch:
+    inputs:
+      image_tag:
+        description: 'Docker image tag'
+        required: false
+        default: 'latest'
+        type: string
+
+jobs:
+  build-image:
+    name: Build and Push Docker Image
+    runs-on: ubuntu-latest
+    outputs:
+      image-name: ${{ steps.image-name.outputs.value }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Azure CLI
+        uses: azure/login@v2
+        with:
+          creds: ${{ secrets.AZURE_CREDENTIALS }}
+
+      - name: Validate Required Secrets
+        run: |
+          if [[ -z "${{ secrets.ACR_NAME }}" ]]; then
+            echo "❌ Error: ACR_NAME secret is required"
+            exit 1
+          fi
+          echo "✅ All required secrets are present"
+
+      - name: Extract Azure Credentials
+        run: |
+          # Extract Azure credentials using jq
+          echo "Extracting Azure credentials..."
+          CLIENT_ID=$(echo '${{ secrets.AZURE_CREDENTIALS }}' | jq -r .clientId)
+          CLIENT_SECRET=$(echo '${{ secrets.AZURE_CREDENTIALS }}' | jq -r .clientSecret)
+          SUBSCRIPTION_ID=$(echo '${{ secrets.AZURE_CREDENTIALS }}' | jq -r .subscriptionId)
+          TENANT_ID=$(echo '${{ secrets.AZURE_CREDENTIALS }}' | jq -r .tenantId)
+
+          # Mask sensitive values
+          echo "::add-mask::$CLIENT_SECRET"
+          echo "::add-mask::$CLIENT_ID"
+          echo "::add-mask::$SUBSCRIPTION_ID"
+          echo "::add-mask::$TENANT_ID"
+          echo "::add-mask::${{ secrets.ACR_NAME }}"
+
+          echo "ARM_CLIENT_ID=$CLIENT_ID" >> $GITHUB_ENV
+          echo "ARM_CLIENT_SECRET=$CLIENT_SECRET" >> $GITHUB_ENV
+          echo "ARM_SUBSCRIPTION_ID=$SUBSCRIPTION_ID" >> $GITHUB_ENV
+          echo "ARM_TENANT_ID=$TENANT_ID" >> $GITHUB_ENV
+          echo "✅ Azure credentials extracted and masked"
+
+      - name: Set Image Tag
+        id: image-tag
+        run: |
+          if [ "${{ github.event_name }}" == "workflow_dispatch" ] && [ -n "${{ github.event.inputs.image_tag }}" ]; then
+            echo "tag=${{ github.event.inputs.image_tag }}" >> $GITHUB_OUTPUT
+          else
+            # Use commit SHA for PRs, 'latest' for main branch
+            if [ "${{ github.event_name }}" == "pull_request" ]; then
+              echo "tag=pr-${{ github.event.number }}-${{ github.sha }}" >> $GITHUB_OUTPUT
+            else
+              echo "tag=latest" >> $GITHUB_OUTPUT
+            fi
+          fi
+          echo "Image tag: ${{ steps.image-tag.outputs.tag }}"
+
+      - name: Enable ACR Public Access
+        run: |
+          echo "Enabling public network access for ACR..."
+          az acr update --name ${{ secrets.ACR_NAME }} --public-network-enabled true
+          echo "✅ ACR public access enabled"
+
+      - name: Login to ACR
+        run: |
+          echo "Logging in to Azure Container Registry..."
+          az acr login --name ${{ secrets.ACR_NAME }}
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build and Push Docker Image
+        run: |
+          # Set image name
+          IMAGE_NAME="${{ secrets.ACR_NAME }}.azurecr.io/nginx-demo:${{ steps.image-tag.outputs.tag }}"
+
+          # Mask the full image name
+          echo "::add-mask::$IMAGE_NAME"
+
+          echo "Building Docker image..."
+
+          # Build the image
+          docker build -t $IMAGE_NAME ./app
+
+          echo "Pushing Docker image to ACR..."
+
+          # Push the image
+          docker push $IMAGE_NAME
+
+          echo "✅ Successfully built and pushed image"
+
+      - name: Set Image Name Output
+        id: image-name
+        run: |
+          IMAGE_NAME="${{ secrets.ACR_NAME }}.azurecr.io/nginx-demo:${{ steps.image-tag.outputs.tag }}"
+          echo "value=$IMAGE_NAME" >> $GITHUB_OUTPUT
+          echo "Image name set for deployment"
+
+      - name: Verify Image in ACR
+        run: |
+          echo "Verifying image in ACR..."
+          az acr repository show-tags \
+            --name ${{ secrets.ACR_NAME }} \
+            --repository nginx-demo \
+            --output table
+
+  deploy-to-aks:
+    name: Deploy to AKS
+    runs-on: ubuntu-latest
+    needs: build-image
+    if: github.event_name != 'pull_request'  # Only deploy on push to main/develop
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Azure CLI
+        uses: azure/login@v2
+        with:
+          creds: ${{ secrets.AZURE_CREDENTIALS }}
+
+      - name: Validate Required Secrets
+        run: |
+          if [[ -z "${{ secrets.JUMPBOX_IP }}" ]]; then
+            echo "❌ Error: JUMPBOX_IP secret is required"
+            exit 1
+          fi
+          if [[ -z "${{ secrets.JUMPBOX_PASSWORD }}" ]]; then
+            echo "❌ Error: JUMPBOX_PASSWORD secret is required"
+            exit 1
+          fi
+          if [[ -z "${{ secrets.RESOURCE_GROUP_NAME }}" ]]; then
+            echo "❌ Error: RESOURCE_GROUP_NAME secret is required"
+            exit 1
+          fi
+          if [[ -z "${{ secrets.AKS_CLUSTER_NAME }}" ]]; then
+            echo "❌ Error: AKS_CLUSTER_NAME secret is required"
+            exit 1
+          fi
+          echo "✅ All required secrets are present"
+
+      - name: Install sshpass
+        run: sudo apt-get update && sudo apt-get install -y sshpass
+
+      - name: Copy Files to Jumpbox
+        run: |
+          echo "Copying k8s manifests and optimized scripts to jumpbox..."
+          sshpass -p "${{ secrets.JUMPBOX_PASSWORD }}" scp -o StrictHostKeyChecking=no -r ./k8s ./scripts azureuser@${{ secrets.JUMPBOX_IP }}:~/
+
+      - name: Deploy Application on Jumpbox
+        run: |
+          echo "Deploying nginx demo app via jumpbox using optimized script..."
+          sshpass -p "${{ secrets.JUMPBOX_PASSWORD }}" ssh -o StrictHostKeyChecking=no azureuser@${{ secrets.JUMPBOX_IP }} << EOF
+            # Set Azure credentials from GitHub secrets
+            export ARM_CLIENT_ID="$(echo '${{ secrets.AZURE_CREDENTIALS }}' | jq -r .clientId)"
+            export ARM_CLIENT_SECRET="$(echo '${{ secrets.AZURE_CREDENTIALS }}' | jq -r .clientSecret)"
+            export ARM_SUBSCRIPTION_ID="$(echo '${{ secrets.AZURE_CREDENTIALS }}' | jq -r .subscriptionId)"
+            export ARM_TENANT_ID="$(echo '${{ secrets.AZURE_CREDENTIALS }}' | jq -r .tenantId)"
+
+            # Set configuration variables
+            export RESOURCE_GROUP="${{ secrets.RESOURCE_GROUP_NAME }}"
+            export AKS_NAME="${{ secrets.AKS_CLUSTER_NAME }}"
+
+            # Run the optimized setup and deploy script
+            cd ~/scripts
+            chmod +x setup-and-deploy.sh
+            ./setup-and-deploy.sh
+          EOF
+
+      - name: Get App URL from Jumpbox
+        id: app-url
+        run: |
+          echo "Fetching external IP from jumpbox..."
+          EXTERNAL_IP=$(sshpass -p "${{ secrets.JUMPBOX_PASSWORD }}" ssh -o StrictHostKeyChecking=no azureuser@${{ secrets.JUMPBOX_IP }} \
+            "cat /tmp/external_ip.txt 2>/dev/null || echo 'IP not available'")
+          echo "app_url=http://$EXTERNAL_IP" >> $GITHUB_OUTPUT
+          echo "✅ App URL: http://$EXTERNAL_IP"
+
+      - name: Check Application Status
+        run: |
+          echo "Checking application status on jumpbox..."
+          sshpass -p "${{ secrets.JUMPBOX_PASSWORD }}" ssh -o StrictHostKeyChecking=no azureuser@${{ secrets.JUMPBOX_IP }} << EOF
+            cd ~/k8s
+            ./status.sh
+          EOF
+
+      - name: Deployment Summary
+        run: |
+          echo "## 🚀 Build and Deploy Summary" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**Docker Image:** ${{ needs.build-image.outputs.image-name }}" >> $GITHUB_STEP_SUMMARY
+          echo "**App URL:** ${{ steps.app-url.outputs.app_url }}" >> $GITHUB_STEP_SUMMARY
+          echo "- AKS Cluster: ${{ secrets.AKS_CLUSTER_NAME }}" >> $GITHUB_STEP_SUMMARY
+          echo "- Resource Group: ${{ secrets.RESOURCE_GROUP_NAME }}" >> $GITHUB_STEP_SUMMARY
+          echo "- Jumpbox IP: ${{ secrets.JUMPBOX_IP }}" >> $GITHUB_STEP_SUMMARY
+          echo "- Registry: ${{ secrets.ACR_NAME }}.azurecr.io" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### What was deployed:" >> $GITHUB_STEP_SUMMARY
+          echo "- ✅ Docker image built and pushed to ACR" >> $GITHUB_STEP_SUMMARY
+          echo "- ✅ NGINX Ingress Controller deployed" >> $GITHUB_STEP_SUMMARY
+          echo "- ✅ Application deployed with LoadBalancer" >> $GITHUB_STEP_SUMMARY
+          echo "- ✅ RBAC roles and bindings configured" >> $GITHUB_STEP_SUMMARY
