@@ -42,7 +42,7 @@ aks-project/
 │   ├── setup-and-deploy.sh    # Azure auth + deployment
 │   ├── deploy-to-private-aks.sh # Local to jumpbox deployment
 │   ├── mask-utils.sh      # Security masking utilities
-│   ├── setup-keyvault-access.sh # Key Vault access policy setup
+│   ├── aks-state-manager.sh # Remote State Management setup
 ├── app/                   # Application source
 │   ├── Dockerfile         # Docker image definition
 │   └── index.html         # Sample web page
@@ -347,20 +347,3 @@ az keyvault delete-policy \
   --resource-group <rg-name> \
   --object-id <jumpbox-identity-id>
 ```
-
-## Recent Updates
-
-### v2.0 - Key Vault Integration
-- ✅ Added Azure Key Vault for secrets management
-- ✅ Integrated jumpbox managed identity with Key Vault
-- ✅ Fixed circular dependency issues
-- ✅ Updated storage module to use new Azure provider syntax
-- ✅ Added Key Vault access setup script
-- ✅ Improved error handling and troubleshooting
-
-### v1.0 - Initial Release
-- ✅ Private AKS cluster deployment
-- ✅ NGINX Ingress Controller
-- ✅ Jumpbox VM with managed identity
-- ✅ Automated CI/CD pipeline
-- ✅ Security masking implementation
