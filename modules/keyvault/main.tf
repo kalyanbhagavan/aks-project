@@ -42,17 +42,8 @@ resource "azurerm_key_vault_access_policy" "service_principal" {
   ]
 }
 
-# Grant the jumpbox managed identity access to the Key Vault
-resource "azurerm_key_vault_access_policy" "jumpbox" {
-  key_vault_id = azurerm_key_vault.main.id
-  tenant_id    = data.azurerm_client_config.current.tenant_id
-  object_id    = var.jumpbox_identity_principal_id
-
-  secret_permissions = [
-    "Get",
-    "List"
-  ]
-}
+# Note: Jumpbox access policy removed to avoid circular dependency
+# This will be handled separately after deployment
 
 # Store GitHub repository URL (can be set manually or via Terraform)
 resource "azurerm_key_vault_secret" "github_repo_url" {

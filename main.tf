@@ -64,12 +64,11 @@ module "jumpbox" {
 module "keyvault" {
   source = "./modules/keyvault"
 
-  key_vault_name                = "aks-demo-kv-${random_string.suffix.result}"
-  resource_group_name           = azurerm_resource_group.main.name
-  location                      = azurerm_resource_group.main.location
-  jumpbox_identity_principal_id = module.jumpbox.managed_identity_principal_id
-  github_repo_url               = var.github_repo_url
-  github_runner_token           = var.github_runner_token
+  key_vault_name      = "aks-demo-kv-${random_string.suffix.result}"
+  resource_group_name = azurerm_resource_group.main.name
+  location            = azurerm_resource_group.main.location
+  github_repo_url     = var.github_repo_url
+  github_runner_token = var.github_runner_token
 
   depends_on = [module.jumpbox]
 }
@@ -113,8 +112,5 @@ resource "azurerm_key_vault_access_policy" "terraform" {
 }
 */
 
-resource "azurerm_key_vault_secret" "storage_account_key" {
-  name         = "storage-account-key"
-  value        = module.storage.storage_account_primary_access_key
-  key_vault_id = module.keyvault.key_vault_id
-}
+# Note: Key Vault secret creation removed due to access permissions
+# The storage account key can be retrieved directly from the storage module output if needed

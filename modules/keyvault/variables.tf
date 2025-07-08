@@ -13,10 +13,7 @@ variable "location" {
   type        = string
 }
 
-variable "jumpbox_identity_principal_id" {
-  description = "Principal ID of the jumpbox managed identity"
-  type        = string
-}
+# Note: jumpbox_identity_principal_id variable removed to avoid circular dependency
 
 variable "github_repo_url" {
   description = "GitHub repository URL"
