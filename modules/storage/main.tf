@@ -8,15 +8,16 @@ resource "azurerm_storage_account" "this" {
   min_tls_version          = "TLS1_2"
   https_traffic_only_enabled = true
 
-  static_website {
-    index_document     = "index.html"
-    error_404_document = "404.html"
-  }
-
   tags = {
     environment = "production"
     project     = "aks-demo-challenge"
   }
+}
+
+resource "azurerm_storage_account_static_website" "static" {
+  storage_account_id = azurerm_storage_account.this.id
+  index_document     = "index.html"
+  error_404_document = "404.html"
 }
 
 resource "azurerm_storage_container" "static" {

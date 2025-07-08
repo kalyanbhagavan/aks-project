@@ -1,4 +1,4 @@
-#cloud-config
+git #cloud-config
 package_update: true
 package_upgrade: true
 

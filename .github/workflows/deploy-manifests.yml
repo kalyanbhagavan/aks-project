@@ -1,0 +1,203 @@
+name: Deploy Kubernetes Manifests
+
+on:
+  workflow_run:
+    workflows: ["Terraform Deploy to Azure"]
+    types:
+      - completed
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      jumpbox_ip:
+        description: 'Jumpbox Public IP Address'
+        required: false
+        type: string
+      acr_name:
+        description: 'Azure Container Registry Name'
+        required: false
+        type: string
+      resource_group:
+        description: 'Resource Group Name'
+        required: false
+        type: string
+      aks_name:
+        description: 'AKS Cluster Name'
+        required: false
+        type: string
+
+jobs:
+  deploy-manifests:
+    name: 'Deploy K8s Manifests via Jumpbox'
+    runs-on: ubuntu-latest
+    environment: production
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: "1.7.0"
+
+      - name: Azure Login
+        uses: azure/login@v2
+        with:
+          creds: ${{ secrets.AZURE_CREDENTIALS }}
+
+      - name: Get Terraform Outputs
+        id: terraform-outputs
+        run: |
+          # Set up backend and get outputs
+          cat > backend.tf <<EOF
+          terraform {
+            backend "azurerm" {
+              resource_group_name  = "${{ secrets.TF_STATE_RESOURCE_GROUP }}"
+              storage_account_name = "${{ secrets.TF_STATE_STORAGE_ACCOUNT }}"
+              container_name       = "${{ secrets.TF_STATE_CONTAINER }}"
+              key                  = "terraform.tfstate"
+              access_key           = "${{ secrets.TF_STATE_KEY }}"
+            }
+          }
+          EOF
+
+          # Initialize and get outputs
+          terraform init
+          terraform output -json > outputs.json
+
+          # Extract values
+          JUMPBOX_IP=$(terraform output -raw jumpbox_public_ip)
+          ACR_NAME=$(terraform output -raw acr_name)
+          RESOURCE_GROUP=$(terraform output -raw resource_group_name)
+          AKS_NAME=$(terraform output -raw aks_name)
+          STORAGE_ACCOUNT=$(terraform output -raw storage_account_name)
+
+          echo "jumpbox_ip=$JUMPBOX_IP" >> $GITHUB_OUTPUT
+          echo "acr_name=$ACR_NAME" >> $GITHUB_OUTPUT
+          echo "resource_group=$RESOURCE_GROUP" >> $GITHUB_OUTPUT
+          echo "aks_name=$AKS_NAME" >> $GITHUB_OUTPUT
+          echo "storage_account=$STORAGE_ACCOUNT" >> $GITHUB_OUTPUT
+
+          echo "::add-mask::$JUMPBOX_IP"
+          echo "::add-mask::$ACR_NAME"
+          echo "::add-mask::$STORAGE_ACCOUNT"
+
+      - name: Set Variables from Inputs (if manual trigger)
+        if: github.event_name == 'workflow_dispatch' && github.event.inputs.jumpbox_ip != ''
+        id: manual-vars
+        run: |
+          echo "jumpbox_ip=${{ github.event.inputs.jumpbox_ip }}" >> $GITHUB_OUTPUT
+          echo "acr_name=${{ github.event.inputs.acr_name }}" >> $GITHUB_OUTPUT
+          echo "resource_group=${{ github.event.inputs.resource_group }}" >> $GITHUB_OUTPUT
+          echo "aks_name=${{ github.event.inputs.aks_name }}" >> $GITHUB_OUTPUT
+
+      - name: Set Final Variables
+        id: final-vars
+        run: |
+          if [ "${{ github.event_name }}" == "workflow_dispatch" ] && [ "${{ github.event.inputs.jumpbox_ip }}" != "" ]; then
+            # Use manual inputs
+            JUMPBOX_IP="${{ steps.manual-vars.outputs.jumpbox_ip }}"
+            ACR_NAME="${{ steps.manual-vars.outputs.acr_name }}"
+            RESOURCE_GROUP="${{ steps.manual-vars.outputs.resource_group }}"
+            AKS_NAME="${{ steps.manual-vars.outputs.aks_name }}"
+          else
+            # Use Terraform outputs
+            JUMPBOX_IP="${{ steps.terraform-outputs.outputs.jumpbox_ip }}"
+            ACR_NAME="${{ steps.terraform-outputs.outputs.acr_name }}"
+            RESOURCE_GROUP="${{ steps.terraform-outputs.outputs.resource_group }}"
+            AKS_NAME="${{ steps.terraform-outputs.outputs.aks_name }}"
+            STORAGE_ACCOUNT="${{ steps.terraform-outputs.outputs.storage_account }}"
+          fi
+
+          echo "final_jumpbox_ip=$JUMPBOX_IP" >> $GITHUB_OUTPUT
+          echo "final_acr_name=$ACR_NAME" >> $GITHUB_OUTPUT
+          echo "final_resource_group=$RESOURCE_GROUP" >> $GITHUB_OUTPUT
+          echo "final_aks_name=$AKS_NAME" >> $GITHUB_OUTPUT
+          echo "final_storage_account=$STORAGE_ACCOUNT" >> $GITHUB_OUTPUT
+
+      - name: Setup SSH
+        run: |
+          mkdir -p ~/.ssh
+          echo "${{ secrets.JUMPBOX_SSH_PRIVATE_KEY }}" > ~/.ssh/id_rsa
+          chmod 600 ~/.ssh/id_rsa
+          eval $(ssh-agent -s)
+          ssh-add ~/.ssh/id_rsa
+          echo "StrictHostKeyChecking no" >> ~/.ssh/config
+
+      - name: Copy Kubernetes Manifests to Jumpbox
+        run: |
+          scp -r ./k8s azureuser@${{ steps.final-vars.outputs.final_jumpbox_ip }}:~/
+
+      - name: Deploy Manifests via SSH
+        run: |
+          ssh azureuser@${{ steps.final-vars.outputs.final_jumpbox_ip }} << 'EOF'
+            # Login to Azure
+            az login --service-principal \
+              --username "${{ secrets.AZURE_CLIENT_ID }}" \
+              --password "${{ secrets.AZURE_CLIENT_SECRET }}" \
+              --tenant "${{ secrets.AZURE_TENANT_ID }}"
+
+            # Set subscription
+            az account set --subscription "${{ secrets.AZURE_SUBSCRIPTION_ID }}"
+
+            # Get AKS credentials
+            az aks get-credentials \
+              --resource-group "${{ steps.final-vars.outputs.final_resource_group }}" \
+              --name "${{ steps.final-vars.outputs.final_aks_name }}" \
+              --admin \
+              --overwrite-existing
+
+            # Create Azure Files secret
+            kubectl create secret generic azure-files-secret \
+              --from-literal=azurestorageaccountname="${{ steps.final-vars.outputs.final_storage_account }}" \
+              --from-literal=azurestorageaccountkey="${{ secrets.STORAGE_ACCOUNT_KEY }}" \
+              --dry-run=client -o yaml | kubectl apply -f -
+
+            # Deploy manifests
+            cd k8s
+            chmod +x deploy-from-jumpbox.sh
+            ./deploy-from-jumpbox.sh "${{ steps.final-vars.outputs.final_acr_name }}"
+
+            # Verify deployment
+            echo "=== Pod Status ==="
+            kubectl get pods
+            echo "=== Service Status ==="
+            kubectl get svc nginx-demo-lb
+
+            # Get external IP
+            EXTERNAL_IP=$(kubectl get svc nginx-demo-lb -o jsonpath='{.status.loadBalancer.ingress[0].ip}')
+            echo "Application is accessible at: http://$EXTERNAL_IP"
+          EOF
+
+      - name: Get Application URL
+        id: app-url
+        run: |
+          EXTERNAL_IP=$(ssh azureuser@${{ steps.final-vars.outputs.final_jumpbox_ip }} \
+            "kubectl get svc nginx-demo-lb -o jsonpath='{.status.loadBalancer.ingress[0].ip}'")
+          echo "app_url=http://$EXTERNAL_IP" >> $GITHUB_OUTPUT
+          echo "Application URL: http://$EXTERNAL_IP"
+
+      - name: Comment on PR (if applicable)
+        uses: actions/github-script@v7
+        if: github.event_name == 'pull_request'
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          script: |
+            const output = `#### Kubernetes Deployment Complete 🚀
+
+            **Application URL:** ${{ steps.app-url.outputs.app_url }}
+
+            **Deployed Resources:**
+            - NGINX Deployment (2 replicas)
+            - LoadBalancer Service
+            - RBAC for dev team
+            - Azure Files integration
+
+            *Deployed via jumpbox to private AKS cluster*`;
+
+            github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body: output
+            })

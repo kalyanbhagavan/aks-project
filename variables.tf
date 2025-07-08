@@ -80,7 +80,6 @@ variable "jumpbox_admin_password" {
   description = "Admin password for the jumpbox VM"
   type        = string
   sensitive   = true
-  default     = "P@ssw0rd123!"
 }
 
 variable "github_repo_url" {

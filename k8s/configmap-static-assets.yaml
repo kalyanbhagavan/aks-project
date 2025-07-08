@@ -1,8 +1,0 @@
-apiVersion: v1
-kind: ConfigMap
-metadata:
-  name: nginx-static-assets
-  namespace: default
-data:
-  demo.txt: |
-    This is a static asset served by NGINX from a ConfigMap.

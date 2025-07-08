@@ -1,0 +1,109 @@
+name: Deploy App to Private AKS
+
+on:
+  push:
+    branches: [ main, develop ]
+    paths:
+      - 'k8s/**'
+      - '.github/workflows/deploy-app-to-aks.yml'
+  pull_request:
+    branches: [ main ]
+    paths:
+      - 'k8s/**'
+      - '.github/workflows/deploy-app-to-aks.yml'
+  workflow_dispatch:
+
+jobs:
+  deploy-app:
+    name: Deploy Nginx Demo App
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Azure CLI
+        uses: azure/login@v2
+        with:
+          creds: ${{ secrets.AZURE_CREDENTIALS }}
+
+      - name: Validate Required Secrets
+        run: |
+          if [[ -z "${{ secrets.JUMPBOX_IP }}" ]]; then
+            echo "❌ Error: JUMPBOX_IP secret is required"
+            exit 1
+          fi
+          if [[ -z "${{ secrets.JUMPBOX_PASSWORD }}" ]]; then
+            echo "❌ Error: JUMPBOX_PASSWORD secret is required"
+            exit 1
+          fi
+          if [[ -z "${{ secrets.RESOURCE_GROUP_NAME }}" ]]; then
+            echo "❌ Error: RESOURCE_GROUP_NAME secret is required"
+            exit 1
+          fi
+          if [[ -z "${{ secrets.AKS_CLUSTER_NAME }}" ]]; then
+            echo "❌ Error: AKS_CLUSTER_NAME secret is required"
+            exit 1
+          fi
+          echo "✅ All required secrets are present"
+
+      - name: Install sshpass
+        run: sudo apt-get update && sudo apt-get install -y sshpass
+
+      - name: Copy Files to Jumpbox
+        run: |
+          echo "Copying k8s manifests and optimized scripts to jumpbox..."
+          sshpass -p "${{ secrets.JUMPBOX_PASSWORD }}" scp -o StrictHostKeyChecking=no -r ./k8s ./scripts azureuser@${{ secrets.JUMPBOX_IP }}:~/
+
+      - name: Deploy Application on Jumpbox
+        run: |
+          echo "Deploying nginx demo app via jumpbox using optimized script..."
+          sshpass -p "${{ secrets.JUMPBOX_PASSWORD }}" ssh -o StrictHostKeyChecking=no azureuser@${{ secrets.JUMPBOX_IP }} << EOF
+            # Set Azure credentials from GitHub secrets
+            export ARM_CLIENT_ID="$(echo '${{ secrets.AZURE_CREDENTIALS }}' | jq -r .clientId)"
+            export ARM_CLIENT_SECRET="$(echo '${{ secrets.AZURE_CREDENTIALS }}' | jq -r .clientSecret)"
+            export ARM_SUBSCRIPTION_ID="$(echo '${{ secrets.AZURE_CREDENTIALS }}' | jq -r .subscriptionId)"
+            export ARM_TENANT_ID="$(echo '${{ secrets.AZURE_CREDENTIALS }}' | jq -r .tenantId)"
+
+            # Set configuration variables
+            export RESOURCE_GROUP="${{ secrets.RESOURCE_GROUP_NAME }}"
+            export AKS_NAME="${{ secrets.AKS_CLUSTER_NAME }}"
+
+            # Run the optimized setup and deploy script
+            cd ~/scripts
+            chmod +x setup-and-deploy.sh
+            ./setup-and-deploy.sh
+          EOF
+
+      - name: Get App URL from Jumpbox
+        id: app-url
+        run: |
+          echo "Fetching external IP from jumpbox..."
+          EXTERNAL_IP=$(sshpass -p "${{ secrets.JUMPBOX_PASSWORD }}" ssh -o StrictHostKeyChecking=no azureuser@${{ secrets.JUMPBOX_IP }} \
+            "cat /tmp/external_ip.txt 2>/dev/null || echo 'IP not available'")
+          echo "app_url=http://$EXTERNAL_IP" >> $GITHUB_OUTPUT
+          echo "✅ App URL: http://$EXTERNAL_IP"
+
+      - name: Check Application Status
+        run: |
+          echo "Checking application status on jumpbox..."
+          sshpass -p "${{ secrets.JUMPBOX_PASSWORD }}" ssh -o StrictHostKeyChecking=no azureuser@${{ secrets.JUMPBOX_IP }} << EOF
+            cd ~/k8s
+            ./status.sh
+          EOF
+
+      - name: Deployment Summary
+        run: |
+          echo "## 🎉 Nginx Demo App Deployment Summary" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**App URL:** ${{ steps.app-url.outputs.app_url }}" >> $GITHUB_STEP_SUMMARY
+          echo "- AKS Cluster: ${{ secrets.AKS_CLUSTER_NAME }}" >> $GITHUB_STEP_SUMMARY
+          echo "- Resource Group: ${{ secrets.RESOURCE_GROUP_NAME }}" >> $GITHUB_STEP_SUMMARY
+          echo "- Jumpbox IP: ${{ secrets.JUMPBOX_IP }}" >> $GITHUB_STEP_SUMMARY
+          echo "- Image: aksdemoacr2025.azurecr.io/nginx-demo:latest" >> $GITHUB_STEP_SUMMARY
+          echo "- Deployment: Simplified k8s manifests deployed via jumpbox" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### What was deployed:" >> $GITHUB_STEP_SUMMARY
+          echo "- 2 nginx pods with resource limits" >> $GITHUB_STEP_SUMMARY
+          echo "- LoadBalancer service exposing port 80" >> $GITHUB_STEP_SUMMARY
+          echo "- Basic RBAC roles and bindings" >> $GITHUB_STEP_SUMMARY
