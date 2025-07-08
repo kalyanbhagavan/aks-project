@@ -3,6 +3,9 @@
 ## Overview
 This code challenge demonstrates a secure, production-grade Azure Kubernetes Service (AKS) private cluster deployment using Terraform, with automated CI/CD via GitHub Actions. The setup includes:
 
+ # Application deployed in this URL: http://52.255.212.179
+
+
 - **Private AKS cluster** (no public API endpoint)
 - **Private ACR** - Only accessible from VNet
 - **NGINX Ingress Controller** for external traffic management
