@@ -18,6 +18,6 @@ spec:
         pathType: Prefix
         backend:
           service:
-            name: nginx-demo-service
+            name: nginx-demo-lb
             port:
               number: 80
