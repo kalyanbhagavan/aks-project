@@ -61,58 +61,6 @@ jobs:
         with:
           creds: ${{ secrets.AZURE_CREDENTIALS }}
 
-      - name: Ensure backend resource group exists
-        run: |
-          echo "Creating/verifying resource group: $TF_STATE_RESOURCE_GROUP"
-          az group show --name "$TF_STATE_RESOURCE_GROUP" || \
-          az group create --name "$TF_STATE_RESOURCE_GROUP" --location "$TF_STATE_LOCATION"
-
-      - name: Get backend storage account key
-        id: get_key
-        run: |
-          echo "Retrieving storage account key..."
-          KEY=$(az storage account keys list --resource-group "$TF_STATE_RESOURCE_GROUP" --account-name "$TF_STATE_STORAGE_ACCOUNT" --query '[0].value' -o tsv)
-          echo "::add-mask::$KEY"
-          echo "TF_STATE_KEY=$KEY" >> $GITHUB_ENV
-          echo "ARM_ACCESS_KEY=$KEY" >> $GITHUB_ENV
-          echo " Storage account key retrieved and masked"
-
-      - name: Export Azure Service Principal credentials
-        run: |
-          echo "Extracting Azure credentials..."
-          CLIENT_ID=$(echo '${{ secrets.AZURE_CREDENTIALS }}' | jq -r .clientId)
-          CLIENT_SECRET=$(echo '${{ secrets.AZURE_CREDENTIALS }}' | jq -r .clientSecret)
-          SUBSCRIPTION_ID=$(echo '${{ secrets.AZURE_CREDENTIALS }}' | jq -r .subscriptionId)
-          TENANT_ID=$(echo '${{ secrets.AZURE_CREDENTIALS }}' | jq -r .tenantId)
-
-          # Mask sensitive values
-          echo "::add-mask::$CLIENT_SECRET"
-          echo "::add-mask::$CLIENT_ID"
-          echo "::add-mask::$SUBSCRIPTION_ID"
-          echo "::add-mask::$TENANT_ID"
-
-          echo "ARM_CLIENT_ID=$CLIENT_ID" >> $GITHUB_ENV
-          echo "ARM_CLIENT_SECRET=$CLIENT_SECRET" >> $GITHUB_ENV
-          echo "ARM_SUBSCRIPTION_ID=$SUBSCRIPTION_ID" >> $GITHUB_ENV
-          echo "ARM_TENANT_ID=$TENANT_ID" >> $GITHUB_ENV
-          echo " Azure credentials extracted and masked"
-
-      - name: Setup Terraform Backend
-        run: |
-          echo "Setting up Terraform backend configuration..."
-          cat > backend.tf <<EOF
-          terraform {
-            backend "azurerm" {
-              resource_group_name  = "$TF_STATE_RESOURCE_GROUP"
-              storage_account_name = "$TF_STATE_STORAGE_ACCOUNT"
-              container_name       = "$TF_STATE_CONTAINER"
-              key                  = "terraform.tfstate"
-              access_key           = "$TF_STATE_KEY"
-            }
-          }
-          EOF
-          echo " Backend configuration created"
-
       - name: Terraform Init
         run: terraform init
 
